@@ -165,9 +165,15 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 			defer wg.Done()
 			defer t.End()
 
+		readLoop:
 			for item := range chIn {
 				if f(unwrapper(item)) {
-					chOut <- item
+					select {
+					case chOut <- item:
+					case <-s.opts.ctx.Done():
+						t.Msg("Cancelled")
+						break readLoop
+					}
 				}
 			}
 		}()
@@ -225,7 +231,7 @@ func (s *Stage[T]) filterStreaming(t Tracer, f FilterFunc[T]) Iterator[T] {
 	ch := make(chan T)
 
 	go func() {
-		t := s.tracer("Filter, streaming, sequential background")
+		t := s.tracer("processor")
 		defer t.End()
 
 	readLoop:
@@ -287,9 +293,15 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 			defer wg.Done()
 			defer t.End()
 
+		workerLoop:
 			for item := range chIn {
 				if f(item) {
-					chOut <- item
+					select {
+					case chOut <- item:
+					case <-s.opts.ctx.Done():
+						t.Msg("Cancelled")
+						break workerLoop
+					}
 				}
 			}
 		}()

@@ -161,9 +161,16 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 			defer wg.Done()
 			defer t.End()
 
+		workerLoop:
 			for itemIn := range chIn {
 				itemOut := switcher(itemIn, m(unwrapper(itemIn)))
-				chOut <- itemOut
+				select {
+				case chOut <- itemOut:
+				case <-s.opts.ctx.Done():
+					t.Msg("Cancelled")
+					break workerLoop
+				}
+
 			}
 
 		}()
@@ -268,8 +275,14 @@ func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M], opts
 			defer wg.Done()
 			defer t.End()
 
+		workerLoop:
 			for item := range chIn {
-				chOut <- m(item)
+				select {
+				case chOut <- m(item):
+				case <-s.opts.ctx.Done():
+					t.Msg("Cancelled")
+					break workerLoop
+				}
 			}
 		}()
 	}

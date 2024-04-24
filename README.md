@@ -2,6 +2,10 @@
 
 go-functional is a library that provides functional constructs for Go programs.
 
+It can be used to construct highly parallel data processing pipelines without
+having to accout for concurrency or details of passing data between processing
+stages.
+
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/jake-scott/go-functional)
 [![Git Workflow](https://img.shields.io/github/workflow/status/jake-scott/go-functional/unit-tests)](https://img.shields.io/github/workflow/status/jake-scott/go-functional/unit-tests)
 [![Go Version](https://img.shields.io/badge/go%20version-%3E=1.21-61CFDD.svg?style=flat-square)](https://golang.org/)
@@ -219,6 +223,9 @@ of the size hint and the value of the Parallelism() option.  So it
 may be necessary to supply the _SizeHint_ option as well as the _Parallelism_
 option especially when the desired degree of parallelism is over 100.
 
+Of course larger degrees of parallelism are suitable for non-CPU bound stages
+like network access where as smaller degrees of parallelism are suited more
+for CPU bound stages.
 
 ## Inherited options
 
@@ -233,4 +240,19 @@ results := functional.NewSliceStage(people,
     Filter(over25).
     Map(personCapitalize)
 ```
+
+Non-inherited options passed to the initial stage constructor do not have any
+effect.
+
+## Contexts
+
+A context can be passed to any stage.  The context is used to abort processing
+when the context is cancelled or expires.  The iterator `Next()` and `Get()`
+methods also accept a context to allow interruption of blocking reads
+(eg. on channels or scanners).  The processing functions pass the stage context
+to the iterator methods, and the caller must also pass a context to these
+methods when extracting the results from the pipeline.
+
+A context **should** be passed to a pipeline or stage whenever there are parallel
+or streaming stages, to avoid goroutine leaks.
 
