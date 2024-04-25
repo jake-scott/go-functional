@@ -3,7 +3,6 @@ package functional
 import (
 	"cmp"
 	"slices"
-	"sync"
 
 	"github.com/jake-scott/go-functional/iter/channel"
 	"github.com/jake-scott/go-functional/iter/slice"
@@ -96,7 +95,7 @@ func mapBatchParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator
 	if s.opts.preserveOrder {
 		tParallel = t.SubTracer("parallel, ordered")
 
-		results := mapBatchParallelProcessor[T, item[T], M, item[M]](tParallel, s, m, orderedWrapper[T], orderedUnwrapper[T], orderedSwitcher[T, M])
+		results := mapBatchParallelProcessor(tParallel, s, m, orderedWrapper[T], orderedUnwrapper[T], orderedSwitcher[T, M])
 
 		// sort by the index of each item[M]
 		slices.SortFunc(results, func(a, b item[M]) int {
@@ -110,7 +109,7 @@ func mapBatchParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator
 		}
 	} else {
 		tParallel = t.SubTracer("parallel, unordered")
-		output = mapBatchParallelProcessor[T, T, M, M](tParallel, s, m, unorderedWrapper[T], unorderedUnwrapper[T], unorderedSwitcher[T, M])
+		output = mapBatchParallelProcessor(tParallel, s, m, unorderedWrapper[T], unorderedUnwrapper[T], unorderedSwitcher[T, M])
 	}
 
 	i := slice.New(output)
@@ -119,7 +118,9 @@ func mapBatchParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator
 }
 
 // T: input type;   TW: wrapped input type;   M: mapped type;   MW: wrapped map type
-func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFunc[T, M], wrapper wrapItemFunc[T, TW], unwrapper unwrapItemFunc[TW, T], switcher switcherFunc[TW, M, MW]) []MW {
+func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFunc[T, M],
+	wrapper wrapItemFunc[T, TW], unwrapper unwrapItemFunc[TW, T], switcher switcherFunc[TW, M, MW]) []MW {
+
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
 	t = t.SubTracer("parallelization=%d", numParallel)
@@ -128,64 +129,22 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 	chIn := make(chan TW)  // main -> worker (query)
 	chOut := make(chan MW) // worker -> main (result)
 
-	// (1) Write the items to the main -> worker channel in a separate thread
-	// of execution.  We don't need to wait for this to be done as we can
-	// tell by way of chWr being closed
-	go func() {
-		t := t.SubTracer("reader")
-		// if anything goes wrong, close chWr to avoid goroutine leaks
-		defer func() {
-			closeChanIfOpen(chIn)
-		}()
-
-		i := 0
-		for s.i.Next(s.opts.ctx) {
-			item := wrapper(uint(i), s.i.Get(s.opts.ctx))
+	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+		func(i uint, t T) {
+			item := wrapper(i, t)
 			chIn <- item
-			i++
-		}
+		},
 
-		t.End()
-	}()
-
-	// (2) Start worker go-routines.  These read items from chWr until that
-	// channel is closed by the producer go-routine (1) above.
-	wg := sync.WaitGroup{}
-	for i := numParallel; i > 0; i-- {
-		wg.Add(1)
-
-		i := i
-		go func() {
-			t := t.SubTracer("processor %d", i)
-
-			defer wg.Done()
-			defer t.End()
-
-		workerLoop:
-			for itemIn := range chIn {
-				itemOut := switcher(itemIn, m(unwrapper(itemIn)))
-				select {
-				case chOut <- itemOut:
-				case <-s.opts.ctx.Done():
-					t.Msg("Cancelled")
-					break workerLoop
-				}
-
+		func(item TW) error {
+			itemOut := switcher(item, m(unwrapper(item)))
+			select {
+			case chOut <- itemOut:
+			case <-s.opts.ctx.Done():
+				return s.opts.ctx.Err()
 			}
 
-		}()
-	}
-
-	// (3) Wait for the workers in a separate go-routine and close the result
-	// channel once they are all done
-	go func() {
-		t := t.SubTracer("wait for processors")
-
-		wg.Wait()
-		close(chOut)
-
-		t.End()
-	}()
+			return nil
+		})
 
 	// Back in the main thread, read results until the result channel has been
 	// closed by (3)
@@ -236,7 +195,7 @@ func mapStreaming[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] 
 	return &i
 }
 
-func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M], opts ...StageOption) Iterator[M] {
+func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
 	t = t.SubTracer("streaming, parallel=%d", numParallel)
@@ -245,58 +204,20 @@ func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M], opts
 	chIn := make(chan T)  // main -> worker (query)
 	chOut := make(chan M) // worker -> next stage (result)
 
-	// (1) Write the items to the main -> worker channel in a separate thread
-	// of execution.  We don't need to wait for this to be done as we can
-	// tell by way of chWr being closed
-	go func() {
-		t := t.SubTracer("reader")
-		// if anything goes wrong, close chIn to avoid goroutine leaks
-		defer func() {
-			closeChanIfOpen(chIn)
-		}()
+	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+		func(i uint, t T) {
+			chIn <- t
+		},
 
-		for s.i.Next(s.opts.ctx) {
-			chIn <- s.i.Get(s.opts.ctx)
-		}
-
-		t.End()
-	}()
-
-	// (2) Start worker go-routines.  These read items from chIn until that
-	// channel is closed by the producer go-routine (1) above.
-	wg := sync.WaitGroup{}
-	for i := numParallel; i > 0; i-- {
-		wg.Add(1)
-
-		i := i
-		go func() {
-			t := t.SubTracer("processor %d", i)
-
-			defer wg.Done()
-			defer t.End()
-
-		workerLoop:
-			for item := range chIn {
-				select {
-				case chOut <- m(item):
-				case <-s.opts.ctx.Done():
-					t.Msg("Cancelled")
-					break workerLoop
-				}
+		func(item T) error {
+			select {
+			case chOut <- m(item):
+			case <-s.opts.ctx.Done():
+				return s.opts.ctx.Err()
 			}
-		}()
-	}
 
-	// (3) Wait for the workers in a separate go-routine and close the result
-	// channel once they are all done
-	go func() {
-		t := t.SubTracer("wait for processors")
-
-		wg.Wait()
-		close(chOut)
-
-		t.End()
-	}()
+			return nil
+		})
 
 	i := channel.New(chOut)
 	return &i

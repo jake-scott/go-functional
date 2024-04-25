@@ -83,7 +83,7 @@ func orderedUnwrapper[T any](wt item[T]) T {
 // the ordered type switcher returns an item wrapper containing the
 // value s of mapped type S, with the same index as the original wrapped
 // item tw.
-func orderedSwitcher[TW any, S any](tw item[TW], s S) item[S] {
+func orderedSwitcher[T any, S any](tw item[T], s S) item[S] {
 	return item[S]{
 		idx:  tw.idx,
 		item: s,

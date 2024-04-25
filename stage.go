@@ -3,6 +3,7 @@ package functional
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/jake-scott/go-functional/iter/channel"
@@ -216,4 +217,65 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 	}
 
 	return nextStage
+}
+
+// parallelProcessor reads values from iter in a go-routine, and calls push() for
+// each element.  The push function should write an element to chIn.
+// numParallel worker goroutines read elements from from chIn and call
+// pull() for each element.  The pull function  should write elements to chOut.
+func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, chIn chan TW, chOut chan MW, push func(uint, T), pull func(TW) error) {
+
+	// (1) Write the items to the main -> worker channel in a separate thread
+	// of execution.  We don't need to wait for this to be done as we can
+	// tell by way of chWr being closed
+	go func() {
+		t := t.SubTracer("reader")
+
+		// if anything goes wrong, close chWr to avoid goroutine leaks
+		defer func() {
+			closeChanIfOpen(chIn)
+		}()
+
+		i := 0
+		for iter.Next(ctx) {
+			push(uint(i), iter.Get(ctx))
+			i++
+		}
+
+		t.End()
+	}()
+
+	// (2) Start worker go-routines.  These read items from chWr until that
+	// channel is closed by the producer go-routine (1) above.
+	wg := sync.WaitGroup{}
+	for i := numParallel; i > 0; i-- {
+		wg.Add(1)
+
+		i := i
+		go func() {
+			t := t.SubTracer("processor %d", i)
+
+			defer wg.Done()
+			defer t.End()
+
+		readLoop:
+			for item := range chIn {
+				err := pull(item)
+				if err != nil {
+					break readLoop
+				}
+			}
+		}()
+	}
+
+	// (3) Wait for the workers in a separate go-routine and close the result
+	// channel once they are all done
+	go func() {
+		t := t.SubTracer("wait for processors")
+
+		wg.Wait()
+		close(chOut)
+
+		t.End()
+	}()
 }
