@@ -2,6 +2,7 @@ package functional
 
 import (
 	"cmp"
+	"context"
 	"slices"
 	"sync"
 
@@ -132,66 +133,27 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 	chIn := make(chan TW)  // main -> worker (query)
 	chOut := make(chan TW) // worker -> main (result)
 
-	// (1) Write the items to the main -> worker channel in a separate thread
-	// of execution.  We don't need to wait for this to be done as we can
-	// tell by way of chWr being closed
-	go func() {
-		t := t.SubTracer("reader")
-		// if anything goes wrong, close chWr to avoid goroutine leaks
-		defer func() {
-			closeChanIfOpen(chIn)
-		}()
-
-		i := 0
-		for s.i.Next(s.opts.ctx) {
-			item := wrapper(uint(i), s.i.Get(s.opts.ctx))
+	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+		// write wrapped input values to the query channel
+		func(i uint, t T) {
+			item := wrapper(i, t)
 			chIn <- item
-			i++
-		}
+		},
 
-		t.End()
-	}()
-
-	// (2) Start worker go-routines.  These read items from chWr until that
-	// channel is closed by the producer go-routine (1) above.
-	wg := sync.WaitGroup{}
-	for i := numParallel; i > 0; i-- {
-		wg.Add(1)
-
-		i := i
-		go func() {
-			t := t.SubTracer("processor %d", i)
-
-			defer wg.Done()
-			defer t.End()
-
-		readLoop:
-			for item := range chIn {
-				if f(unwrapper(item)) {
-					select {
-					case chOut <- item:
-					case <-s.opts.ctx.Done():
-						t.Msg("Cancelled")
-						break readLoop
-					}
+		// read wrapped values from the query channel, write to the output channel if f() == true
+		func(item TW) error {
+			if f(unwrapper(item)) {
+				select {
+				case chOut <- item:
+				case <-s.opts.ctx.Done():
+					return s.opts.ctx.Err()
 				}
 			}
-		}()
-	}
-
-	// (3) Wait for the workers in a separate go-routine and close the result
-	// channel once they are all done
-	go func() {
-		t := t.SubTracer("wait for processors")
-
-		wg.Wait()
-		close(chOut)
-
-		t.End()
-	}()
+			return nil
+		})
 
 	// Back in the main thread, read results until the result channel has been
-	// closed by (3)
+	// closed by a go-routine started by parallelProcessor()
 	items := make([]TW, 0, s.opts.sizeHint)
 	for i := range chOut {
 		items = append(items, i)
@@ -263,24 +225,55 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 	chIn := make(chan T)  // main -> worker (query)
 	chOut := make(chan T) // worker -> next stage (result)
 
+	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+		// write input values to the query channel
+		func(i uint, t T) {
+			chIn <- t
+		},
+
+		// read values from the query channel, write to the output channel if f() == true
+		func(t T) error {
+			if f(t) {
+				select {
+				case chOut <- t:
+				case <-s.opts.ctx.Done():
+					return s.opts.ctx.Err()
+				}
+			}
+			return nil
+		})
+
+	i := channel.New(chOut)
+	return &i
+}
+
+// parallelProcessor reads values from iter in a go-routine, and calls push() for
+// each element.  The push function should write an element to chIn.
+// numParallel worker goroutines read elements from from chIn and call
+// pull() for each element.  The pull function  should write elements to chOut.
+func parallelProcessor[T, TW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, chIn, chOut chan TW, push func(uint, T), pull func(TW) error) {
+
 	// (1) Write the items to the main -> worker channel in a separate thread
 	// of execution.  We don't need to wait for this to be done as we can
 	// tell by way of chWr being closed
 	go func() {
 		t := t.SubTracer("reader")
-		// if anything goes wrong, close chIn to avoid goroutine leaks
+
+		// if anything goes wrong, close chWr to avoid goroutine leaks
 		defer func() {
 			closeChanIfOpen(chIn)
 		}()
 
-		for s.i.Next(s.opts.ctx) {
-			chIn <- s.i.Get(s.opts.ctx)
+		i := 0
+		for iter.Next(ctx) {
+			push(uint(i), iter.Get(ctx))
+			i++
 		}
 
 		t.End()
 	}()
 
-	// (2) Start worker go-routines.  These read items from chIn until that
+	// (2) Start worker go-routines.  These read items from chWr until that
 	// channel is closed by the producer go-routine (1) above.
 	wg := sync.WaitGroup{}
 	for i := numParallel; i > 0; i-- {
@@ -293,15 +286,11 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 			defer wg.Done()
 			defer t.End()
 
-		workerLoop:
+		readLoop:
 			for item := range chIn {
-				if f(item) {
-					select {
-					case chOut <- item:
-					case <-s.opts.ctx.Done():
-						t.Msg("Cancelled")
-						break workerLoop
-					}
+				err := pull(item)
+				if err != nil {
+					break readLoop
 				}
 			}
 		}()
@@ -318,6 +307,4 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 		t.End()
 	}()
 
-	i := channel.New(chOut)
-	return &i
 }

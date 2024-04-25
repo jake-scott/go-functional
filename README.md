@@ -1,10 +1,8 @@
-# go-functional: high performance functional primitives for Go
+# go-functional: High-Performance functional primitives for Go
 
 go-functional is a library that provides functional constructs for Go programs.
 
-It can be used to construct highly parallel data processing pipelines without
-having to accout for concurrency or details of passing data between processing
-stages.
+
 
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/jake-scott/go-functional)
 [![Git Workflow](https://img.shields.io/github/workflow/status/jake-scott/go-functional/unit-tests)](https://img.shields.io/github/workflow/status/jake-scott/go-functional/unit-tests)
@@ -13,47 +11,94 @@ stages.
 
 # Overview
 
-go-functional provides functional constructs to Go programs.  It can be used
-to create processing pipelines made up of multiple stages, each of which is
-individually configurable.  The library provides:
-* Filter, Map and Reduce functions for each processing stage
-* A procedural and an OO interface
-  * the OO interface is not supported for Map stages that produce items of
-    a different type to those consumed
-* Batch and stream processing modes for each stage
-* Sequential and parallel processing for each stage
+go-functional is a high-performance library that provides functional constructs
+for Go programs. It allows developers to easily construct highly parallel data
+processing pipelines without worrying about concurrency or the intricacies of
+data transfer between stages.
+
+## Key Features
+
+* Filter, Map, and Reduce functions for each processing stage
+* Procedural and object-oriented interfaces
+* Batch and stream processing modes
+* Sequential and parallel processing
+* Configurable parameters for fine-grained control
+* Context support for cancellation and resource management
+
+## Installation
+
+```bash
+go get github.com/jake-scott/go-functional
+```
+
+# Usage
+
+## Basic Example
+
+```go
+type Person struct {
+    Name string
+    Age  int
+}
+
+people := []Person{
+    {"Alice", 30},
+    {"Bob", 25},
+    {"Charlie", 40},
+}
+
+// Filter adults
+adults := functional.NewSliceStage(people).
+    Filter(func(p Person) bool { return p.Age >= 30 })
+
+// Map names to uppercase
+names := functional.Map(adults, func(p Person) string { return strings.ToUpper(p.Name) })
+
+// Iterate over results
+ctx := context.Background()
+for names.Iterator().Next(ctx) {
+    fmt.Println(names.Iterator().Get(ctx)) // Output: ALICE, CHARLIE
+}
+```
+
+## Advanced Features
+* Batch vs. streaming processing
+* Sequential vs. parallel processing
+* Inherited options
+* Context cancellation
 
 # Concepts
 
 Pipelines are constructed by stiching multiple processing stages together.
-The output of each stage is another stage, who's input is tied to the previous
-stage's output.
+The output of each stage becomes the input for the next stage.
 
-Each stage reads its input using an Interator.  Iterator is an interface,
-allowing the way that the initial stage consumes items, to be customized by
-the developer.  go-functional supplies Iterator implementations that read
-from:
+Each stage reads its input using an Iterator. Iterator is an interface, allowing
+the developer to customize the way the initial stage consumes items. go-functional
+supplies Iterator implementations that read from:
 * simple slices
 * channels
 * bufio.Scanner and like implemtations of the iter.scanner.Scanner interface
 
-The way that stages process items can be effected by stage-wide configuration
-that can also be specified at the filter/map/reduce call-sites.  Configuration
-can be passed between stages by marking it as inheritable.  The following
-processing parameters can be effected by configuration:
+The way stages process items can be affected by configuration supplied to the
+first stage when it is constructed, or to per-stage filter/map/reduce calls.
+Configuration can be passed between stages by marking it as inheritable.
+The following processing parameters can be affected by configuration:
+
 * Processing type (batch or streaming)
 * Maximal degree of parallelization
 * Order preservation (for batch stages)
 
-Additionally stages can be provided with a size hint which can help reduce
-allocaton overhead in batch stages that are reading an input of unknown size,
-and a context to cancel background go-routines created by streaming stages.
+Additionally, stages can be provided with a size hint, which can help reduce
+allocation overhead in batch stages reading an input of unknown size, and a
+context to cancel background goroutines created by streaming and parallel stages.
+
 
 ## Processing functions
 
-All of the processing functions receive a function object _f_ which is executed
-for each input element _e_.  The processing functions produce outputs based on
-the result of the function object execution _f(e)_.
+All processing functions are passed a function object _f_ which is executed for
+each input element _e_. The processing functions produce outputs based on the
+result of the function object execution _f(e)_.
+
 
 ### Filter
 
@@ -66,14 +111,19 @@ elements have the value of `f(e)` and may be of a different type than the input
 elements.
 
 ## Reduce
-<TO DO!>
+
+The Reduce processor outputs a single element that is the result of running
+a reduce function on every element.  Reduce functions mutate an accumulator
+as elements are processed, by returning the new version of the accumulator.
 
 
 # Basic usage
+
 ## Initializing the pipeline
 
 The pipeline must be primed with an initial source of elements.  go-functional
 provides three generic helper functions to create the first stage:
+
 * `NewSliceStage[T]()` creates an initial pipeline stage that iterates over
   the supplied slice of elements of type `T`.
 * `NewChannelStage[T]()` creates an initial pipeline stage that reads elements
@@ -94,12 +144,15 @@ people := []person{
     {"Dave", 89},
     {"Mo", 20},
 }
+
+pipeline := NewSliceStage(people)
 ```
 
 ## Processing items
 
-The processing functions can be used in an OO or procedural manner.  The OO
-interface allows for chaining of multiple processing stages, for example:
+The processing functions can be used in an object-oriented or procedural manner.
+The object-oriented interface allows for chaining of multiple processing stages,
+for example:
 
 ```go
 over25 := func(p person) bool {
@@ -116,8 +169,8 @@ results := functional.NewSliceStage(people).
     Map(personCapitalize)
 ```
 
-The OO interface cannot be used when a map function returns elements of a
-new type.  In that case the procedural interface must be used at least for
+The object-oriented interface cannot be used when a map function returns elements
+of a new type. In that case, the procedural interface must be used at least for
 that stage:
 
 ```go
@@ -134,8 +187,7 @@ results := functional.Map(results1, getName)
 
 ## Retrieving results
 
-The caller can extract the Iterator from the last pipeline stage and use that
-to iterate over the results:
+The caller reads results from the Iterator from the last pipeline stage:
 
 ```go
 iter := results.Iterator()
@@ -154,30 +206,29 @@ for iter.Next(ctx) {
 
 ## Batch vs streaming
 
-By default, pipeline stages process their input in batch.  This means that
-each stage must complete before the next proceeds.  Each stage stores the
+By default, pipeline stages process their input in batch mode.  This means that
+each stage must complete before the next can proceed.  Each stage stores the
 results in a new slice that is passed to the next stage when the original
-stage finishes.  This works well when the number of elements is low enough to
-process in memory, and when the processing functions are fast.
+stage finishes.  This approach works well when the number of elements is low
+enough to process in memory, and when the processing functions are fast.
 
 When processing functions are slow (eg. use a lot of CPU or depend on
-resources like the network), or when the number of items is very large, stages
-can be configured to stream results to the next stage over a channel, as
+external resources like the network), or when the number of items is very large,
+stages can be configured to stream results to the next stage over a channel, as
 results are produced.
 
 For example:
 ```go
-
 // DNS lookups are slow...
 func toHostname(addr netip.Addr) string {
-	hn := addr.String()
+    hn := addr.String()
 
-	names, err := net.LookupAddr(hn)
-	if err == nil {
-		hn = names[0]
-	}
+    names, err := net.LookupAddr(hn)
+    if err == nil {
+        hn = names[0]
+    }
 
-	return hn
+    return hn
 }
 
 ch := make(chan netip.Addr)
@@ -193,18 +244,18 @@ iter := results.Iterator()
 for iter.Next(ctx) {
     fmt.Println(iter.Get(ctx))
 }
-
 ```
 
 ## Sequential vs parallel processing
 
-By default, pipeline stages process input elements one at a time, whether
-processing in batch or streaming.  This works when the processing function
-can keep up with the pace of input elements (if streaming) or is otherwise
-fast.
+By default, pipeline stages process input elements one at a time, irrespective
+of whether they are in batch or streaming mode.. This approach works when the
+processing function can keep up with the pace of input elements (in the case
+of streaming) or when the function itself if fast.
 
-When the processing function is too slow, the whole pipeline slows down.  The
-slow stage can be run in parallel to alleviate the stall.
+When a processing function is slow, it can become a bottleneck for the entire
+pipeline. To address this, the slow stage can be run in parallel to increase
+performance.
 
 For example:
 ```go
@@ -213,32 +264,47 @@ results := functional.Map(stage, toHostname,
     functional.Parallelism(10))
 ```
 
-Note that the requested degree of parallelism is used in conjunction  with the
-size hint for a stage.  When an underlying iterator cannot supply its own size
-hint (eg. channels or scanners), a stage uses a user supplied hint or otherwise
-defaults to 100.
 
-The maximum degree of parallelism actually used by a stage is the minimum
-of the size hint and the value of the Parallelism() option.  So it
-may be necessary to supply the _SizeHint_ option as well as the _Parallelism_
-option especially when the desired degree of parallelism is over 100.
+Note that the requested degree of parallelism is used in conjunction with the
+size hint for a stage. When an underlying iterator cannot supply its own size
+hint (e.g., channels or scanners), a stage uses a user-supplied hint or
+otherwise defaults to 100 (which can be changed by updating the value of the
+`DefaultSizeHint` variable).
 
-Of course larger degrees of parallelism are suitable for non-CPU bound stages
-like network access where as smaller degrees of parallelism are suited more
-for CPU bound stages.
+The maximum degree of parallelism used by a stage is the minimum of the size
+hint and the value of the Parallelism() option. Hence, it may be necessary to
+supply both the SizeHint and Parallelism options, especially when aiming for
+a degree of parallelism exceeding 100.
+
+Larger degrees of parallelism are suitable for non-CPU bound stages like network
+access, whereas smaller degrees of parallelism are more suited for CPU-bound
+stages.
+
 
 ## Inherited options
 
 Whenever options are passed to an initial stage or a processing function, the
-`InheritOptions` option may also be supplied to cause all the supplied options
-to be inherited by future stages.  These options can the be overridden per
-processing function, eg:
-```
+`InheritOptions` option can also be supplied to enable the inheritance of all
+the provided options by future stages. These inherited options can then be
+overridden per processing function. For example:
+
+```go
+join := func(a, b string) string {
+    if a == "" {
+        return b
+    } else {
+        return fmt.Sprintf("%s, %s", a, b)
+    }
+}
+
 results := functional.NewSliceStage(people,
-	    functional.InheritOptions(true),
-		functional.WithTracing(true)).
-    Filter(over25).
-    Map(personCapitalize)
+              functional.InheritOptions(true),
+              functional.WithTracing(true)).
+            Filter(over25).
+            Map(personCapitalize).
+            Reduce("", join)
+
+fmt.Println(results)        // Output: ALICE, CHARLIE
 ```
 
 Non-inherited options passed to the initial stage constructor do not have any
@@ -246,13 +312,23 @@ effect.
 
 ## Contexts
 
-A context can be passed to any stage.  The context is used to abort processing
-when the context is cancelled or expires.  The iterator `Next()` and `Get()`
-methods also accept a context to allow interruption of blocking reads
-(eg. on channels or scanners).  The processing functions pass the stage context
+A context can be passed to any stage, which allows the pipeline to be canceled
+when the context is canceled or expires. The iterator `Next()` and `Get()`
+methods also accept a context to enable the interruption of blocking reads
+(e.g., on channels or scanners). The processing functions pass the stage context
 to the iterator methods, and the caller must also pass a context to these
 methods when extracting the results from the pipeline.
 
-A context **should** be passed to a pipeline or stage whenever there are parallel
-or streaming stages, to avoid goroutine leaks.
+It's recommended to use a context for pipelines or stages that involve parallel
+or streaming stages to avoid goroutine leaks.
+
+# API Reference
+
+For detailed information on functions and types, please refer to the
+[API documentation](https://pkg.go.dev/mod/github.com/jake-scott/go-functional)
+
+# License
+
+This project is licensed under the Apache v2 License - see the
+[LICENSE](LICENSE) file for details.
 

@@ -9,7 +9,7 @@ import (
 	"github.com/jake-scott/go-functional/iter/scanner"
 )
 
-func ExampleScannerIterator() {
+func ExampleIterator() {
 	f, err := os.Open("/etc/passwd")
 	if err != nil {
 		panic(err)

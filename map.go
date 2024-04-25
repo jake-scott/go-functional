@@ -43,7 +43,7 @@ func (s *Stage[T]) Map(m MapFunc[T, T], opts ...StageOption) *Stage[T] {
 // where the map function returns items of a different type than the input
 // elements, due to limitations of Golang's generic syntax.
 func Map[T, M any](s *Stage[T], m MapFunc[T, M], opts ...StageOption) *Stage[M] {
-	// opts for this Filter are the stage options overridden by the filter
+	// opts for this Map are the stage options overridden by the Map
 	// specific options passed to this call
 	merged := *s
 	merged.opts.processOptions(opts...)
@@ -71,7 +71,7 @@ func mapBatch[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 		s.opts.sizeHint = sh.Size()
 	}
 
-	// handle parallel filters separately..
+	// handle parallel maps separately..
 	if s.opts.maxParallelism > 1 {
 		return mapBatchParallel(t, s, m)
 	}

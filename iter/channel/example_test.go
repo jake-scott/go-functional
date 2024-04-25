@@ -8,7 +8,7 @@ import (
 	"github.com/jake-scott/go-functional/iter/channel"
 )
 
-func ExampleChannelIterator() {
+func ExampleIterator() {
 	ctx := context.Background()
 
 	// will always return the same output

@@ -11,23 +11,6 @@ import (
 	"go.uber.org/goleak"
 )
 
-// const _randSeed = 123
-
-// func makeInts(n, max int) (out []int) {
-// 	out = make([]int, n)
-
-// 	rand := rand.New(rand.NewSource(_randSeed))
-// 	for i := 0; i < n; i++ {
-// 		out[i] = rand.Int() % max
-// 	}
-
-// 	return
-// }
-
-var tenInts = []int{
-	89, 46, 43, 83, 87, 63, 48, 91, 75, 28,
-}
-
 var hundredInts = []int{
 	89, 46, 43, 83, 87, 63, 48, 91, 75, 28,
 	56, 21, 6, 12, 5, 39, 61, 63, 16, 23,
@@ -47,11 +30,6 @@ var hundredIntsEven = []int{
 	62, 66, 50, 86, 74, 12, 52, 72, 6, 84,
 	12, 98, 54, 34, 36, 22, 20, 34, 50, 74,
 	88, 18, 26, 36, 94, 60,
-}
-
-var hundredIntsEvenDiv3 = []int{
-	48, 6, 12, 36, 30, 66, 12, 72, 6, 84,
-	12, 54, 36, 18, 36, 60,
 }
 
 func TestCloseChanIfOpen(t *testing.T) {

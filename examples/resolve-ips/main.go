@@ -67,19 +67,19 @@ func main() {
 
 	stage := functional.NewChannelStage(ch,
 		functional.InheritOptions(true),
-		functional.WithTracing(true))
+		functional.WithTracing(true),
+		functional.WithContext(ctx))
 
 	results := functional.Map(stage, toHostname,
 		functional.ProcessingType(functional.StreamingStage),
-		functional.Parallelism(10))
+		functional.Parallelism(100))
 
-	iter := results.Iterator()
-	for iter.Next(ctx) {
-		fmt.Println(iter.Get(ctx))
+	// it would be better to read from results.Iterator() directly, but
+	// this demonstrates how a Reduce step can be used
+	hosts := make([]string, 100)
+	hosts = functional.Reduce(results, hosts, functional.SliceFromIterator)
+
+	for _, hn := range hosts {
+		fmt.Println(hn)
 	}
-
-	if err := iter.Error(); err != nil {
-		panic(err)
-	}
-
 }

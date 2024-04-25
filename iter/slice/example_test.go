@@ -7,7 +7,7 @@ import (
 	"github.com/jake-scott/go-functional/iter/slice"
 )
 
-func ExampleSliceIterator() {
+func ExampleIterator() {
 	input := []string{"dog", "cat", "fox", "pigeon"}
 
 	ctx := context.Background()
