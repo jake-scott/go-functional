@@ -110,7 +110,7 @@ The Map processor outputs one element for every input element.  The output
 elements have the value of `f(e)` and may be of a different type than the input
 elements.
 
-## Reduce
+### Reduce
 
 The Reduce processor outputs a single element that is the result of running
 a reduce function on every element.  Reduce functions mutate an accumulator
