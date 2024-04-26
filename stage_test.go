@@ -5,11 +5,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jake-scott/go-functional/iter/channel"
 	"github.com/jake-scott/go-functional/iter/scanner"
 	"github.com/jake-scott/go-functional/iter/slice"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/goleak"
 )
 
 func mkStageOpts1() []StageOption {
@@ -127,4 +129,68 @@ func TestNewScannerStage(t *testing.T) {
 	assert.NotNil(s.opts.ctx)
 	assert.IsType(&scanner.Iterator{}, s.i)
 	assert.IsType(&scanner.Iterator{}, s.Iterator())
+}
+
+func TestParallelProcessor(t *testing.T) {
+	assert := assert.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	iterIn := slice.New(hundredInts)
+	tr := NewTracer(1, "test", func(f string, v ...any) {
+		t.Logf(f, v...)
+	})
+
+	ch := parallelProcessor[int, int, int](ctx, 5, &iterIn, tr,
+		func(idx uint, i int, ch chan int) {
+			ch <- i
+		},
+		func(i int, ch chan int) error {
+			ch <- i
+			return nil
+		})
+
+	assert.IsType(make(chan int), ch)
+
+	results := make([]int, 0, len(hundredInts))
+	for v := range ch {
+		results = append(results, v)
+	}
+
+	// results will not be in order..
+	assert.ElementsMatch(hundredInts, results)
+	assert.NoError(goleak.Find())
+}
+
+func TestParallelProcessorCancelled(t *testing.T) {
+	assert := assert.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	iterIn := slice.New(hundredInts)
+	tr := NewTracer(1, "test", func(f string, v ...any) {
+		t.Logf(f, v...)
+	})
+
+	ch := parallelProcessor[int, int, int](ctx, 5, &iterIn, tr,
+		func(idx uint, i int, ch chan int) {
+			ch <- i
+		},
+		func(i int, ch chan int) error {
+			select {
+			case ch <- i:
+			case <-ctx.Done():
+				t.Logf("Cancelled")
+				return ctx.Err()
+			}
+			return nil
+		})
+
+	assert.IsType(make(chan int), ch)
+
+	cancel()
+	time.Sleep(2 * time.Second)
+	assert.NoError(goleak.Find())
 }

@@ -91,8 +91,8 @@ func (t *tracer) End() {
 	t.traceFunc("%s: END [stage #%s] %s", time.Now().Format(time.RFC3339), t.id(), t.description)
 }
 
-type NullTracer struct{}
+type nullTracer struct{}
 
-func (t NullTracer) SubTracer(description string, v ...any) Tracer { return t }
-func (t NullTracer) Msg(string, ...any)                            {}
-func (t NullTracer) End()                                          {}
+func (t nullTracer) SubTracer(description string, v ...any) Tracer { return t }
+func (t nullTracer) Msg(string, ...any)                            {}
+func (t nullTracer) End()                                          {}

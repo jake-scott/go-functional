@@ -187,7 +187,7 @@ func (s *Stage[T]) tracer(description string, v ...any) Tracer {
 		description = fmt.Sprintf("(%T) %s", t, description)
 		return NewTracer(s.id, description, s.opts.tracer, v...)
 	} else {
-		return NullTracer{}
+		return nullTracer{}
 	}
 }
 
@@ -227,35 +227,34 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 //
 // T:  source item type
 // TW: wrapped source item type
-// MW: wrapped result item type (same as TW for filers, possibly different than TW for maps)
+// MW: wrapped result item type (same as TW for filters, possibly different than TW for maps)
 func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, push func(uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
-	chIn := make(chan TW)
-	chOut := make(chan MW)
+	chWorker := make(chan TW) // channel towards to workers
+	chOut := make(chan MW)    // worker output channel
 
-	// (1) Write the items to the main -> worker channel in a separate thread
-	// of execution.  We don't need to wait for this to be done as we can
-	// tell by way of chWr being closed
+	// (1) Write the items to the worker channel in a separate thread
+	// of execution.
 	go func() {
 		t := t.SubTracer("reader")
 
-		// if anything goes wrong, close chWr to avoid goroutine leaks
+		// close chWorker when done.. this will cause the workers to terminate
 		defer func() {
-			closeChanIfOpen(chIn)
+			closeChanIfOpen(chWorker)
 		}()
 
 		i := 0
 		for iter.Next(ctx) {
-			push(uint(i), iter.Get(ctx), chIn)
+			push(uint(i), iter.Get(ctx), chWorker)
 			i++
 		}
 
 		t.End()
 	}()
 
-	// (2) Start worker go-routines.  These read items from chWr until that
+	// (2) Start worker go-routines.  These read items from chWorker until that
 	// channel is closed by the producer go-routine (1) above.
 	wg := sync.WaitGroup{}
-	for i := numParallel; i > 0; i-- {
+	for i := uint(0); i < numParallel; i++ {
 		wg.Add(1)
 
 		i := i
@@ -266,7 +265,7 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 			defer t.End()
 
 		readLoop:
-			for item := range chIn {
+			for item := range chWorker {
 				err := pull(item, chOut)
 				if err != nil {
 					break readLoop
