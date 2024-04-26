@@ -130,21 +130,18 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 	t = t.SubTracer("parallelization=%d", numParallel)
 	defer t.End()
 
-	chIn := make(chan TW)  // main -> worker (query)
-	chOut := make(chan TW) // worker -> main (result)
-
-	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
 		// write wrapped input values to the query channel
-		func(i uint, t T) {
+		func(i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
-			chIn <- item
+			ch <- item
 		},
 
 		// read wrapped values from the query channel, write to the output channel if f() == true
-		func(item TW) error {
+		func(item TW, ch chan TW) error {
 			if f(unwrapper(item)) {
 				select {
-				case chOut <- item:
+				case ch <- item:
 				case <-s.opts.ctx.Done():
 					return s.opts.ctx.Err()
 				}
@@ -222,20 +219,17 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 	t = t.SubTracer("streaming, parallel=%d", numParallel)
 	defer t.End()
 
-	chIn := make(chan T)  // main -> worker (query)
-	chOut := make(chan T) // worker -> next stage (result)
-
-	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
+	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
 		// write input values to the query channel
-		func(i uint, t T) {
-			chIn <- t
+		func(i uint, t T, ch chan T) {
+			ch <- t
 		},
 
 		// read values from the query channel, write to the output channel if f() == true
-		func(t T) error {
+		func(t T, ch chan T) error {
 			if f(t) {
 				select {
-				case chOut <- t:
+				case ch <- t:
 				case <-s.opts.ctx.Done():
 					return s.opts.ctx.Err()
 				}

@@ -126,19 +126,16 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 	t = t.SubTracer("parallelization=%d", numParallel)
 	defer t.End()
 
-	chIn := make(chan TW)  // main -> worker (query)
-	chOut := make(chan MW) // worker -> main (result)
-
-	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
-		func(i uint, t T) {
+	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+		func(i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
-			chIn <- item
+			ch <- item
 		},
 
-		func(item TW) error {
+		func(item TW, ch chan MW) error {
 			itemOut := switcher(item, m(unwrapper(item)))
 			select {
-			case chOut <- itemOut:
+			case ch <- itemOut:
 			case <-s.opts.ctx.Done():
 				return s.opts.ctx.Err()
 			}
@@ -201,17 +198,14 @@ func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iter
 	t = t.SubTracer("streaming, parallel=%d", numParallel)
 	defer t.End()
 
-	chIn := make(chan T)  // main -> worker (query)
-	chOut := make(chan M) // worker -> next stage (result)
-
-	parallelProcessor(s.opts.ctx, numParallel, s.i, t, chIn, chOut,
-		func(i uint, t T) {
-			chIn <- t
+	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+		func(i uint, t T, ch chan T) {
+			ch <- t
 		},
 
-		func(item T) error {
+		func(item T, ch chan M) error {
 			select {
-			case chOut <- m(item):
+			case ch <- m(item):
 			case <-s.opts.ctx.Done():
 				return s.opts.ctx.Err()
 			}

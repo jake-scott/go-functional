@@ -219,11 +219,18 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 	return nextStage
 }
 
-// parallelProcessor reads values from iter in a go-routine, and calls push() for
-// each element.  The push function should write an element to chIn.
-// numParallel worker goroutines read elements from from chIn and call
-// pull() for each element.  The pull function  should write elements to chOut.
-func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, chIn chan TW, chOut chan MW, push func(uint, T), pull func(TW) error) {
+// parallelProcessor reads values from iter in a producer go-routine, and calls push() for
+// each element.  The push function should write an element to ch.
+// numParallel worker goroutines read elements from from the producer goroutine and call
+// pull() for each element.  The pull function should write possibly new elements to ch.
+// The return value is a channel to which unordered results can be read.
+//
+// T:  source item type
+// TW: wrapped source item type
+// MW: wrapped result item type (same as TW for filers, possibly different than TW for maps)
+func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, push func(uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
+	chIn := make(chan TW)
+	chOut := make(chan MW)
 
 	// (1) Write the items to the main -> worker channel in a separate thread
 	// of execution.  We don't need to wait for this to be done as we can
@@ -238,7 +245,7 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 
 		i := 0
 		for iter.Next(ctx) {
-			push(uint(i), iter.Get(ctx))
+			push(uint(i), iter.Get(ctx), chIn)
 			i++
 		}
 
@@ -260,7 +267,7 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 
 		readLoop:
 			for item := range chIn {
-				err := pull(item)
+				err := pull(item, chOut)
 				if err != nil {
 					break readLoop
 				}
@@ -278,4 +285,6 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 
 		t.End()
 	}()
+
+	return chOut
 }
