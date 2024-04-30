@@ -5,7 +5,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jake-scott/go-functional/iter/channel"
 	"github.com/jake-scott/go-functional/iter/scanner"
@@ -176,13 +175,18 @@ func TestParallelProcessorCancelled(t *testing.T) {
 
 	ch := parallelProcessor[int, int, int](ctx, 5, &iterIn, tr,
 		func(idx uint, i int, ch chan int) {
-			ch <- i
+			select {
+			case ch <- i:
+			case <-ctx.Done():
+				tr.Msg("Cancelled1")
+				return
+			}
 		},
 		func(i int, ch chan int) error {
 			select {
 			case ch <- i:
 			case <-ctx.Done():
-				t.Logf("Cancelled")
+				tr.Msg("Cancelled2")
 				return ctx.Err()
 			}
 			return nil
@@ -191,6 +195,5 @@ func TestParallelProcessorCancelled(t *testing.T) {
 	assert.IsType(make(chan int), ch)
 
 	cancel()
-	time.Sleep(2 * time.Second)
 	assert.NoError(goleak.Find())
 }

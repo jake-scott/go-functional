@@ -10,6 +10,7 @@ import "context"
 type Iterator[T any] struct {
 	s   []T
 	pos int
+	err error
 }
 
 // New returns an implementation of Iterator that traverses
@@ -35,6 +36,12 @@ func (r *Iterator[T]) Next(ctx context.Context) bool {
 	if r.pos >= len(r.s) {
 		return false
 	}
+
+	if _, ok := <-ctx.Done(); !ok {
+		r.err = ctx.Err()
+		return false
+	}
+
 	r.pos++
 	return true
 }
@@ -53,5 +60,5 @@ func (r *Iterator[T]) Get(ctx context.Context) T {
 
 // Error always retruns nil
 func (r *Iterator[T]) Error() error {
-	return nil
+	return r.err
 }

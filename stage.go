@@ -265,9 +265,14 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 			defer t.End()
 
 		readLoop:
-			for item := range chWorker {
-				err := pull(item, chOut)
-				if err != nil {
+			for {
+				select {
+				case item := <-chWorker:
+					err := pull(item, chOut)
+					if err != nil {
+						break readLoop
+					}
+				case <-ctx.Done():
 					break readLoop
 				}
 			}
