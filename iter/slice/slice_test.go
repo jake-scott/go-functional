@@ -57,3 +57,21 @@ func TestSliceIter2(t *testing.T) {
 	// Zero value
 	assert.Equal(iter.Get(ctx), 0)
 }
+
+func TestCancel(t *testing.T) {
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	iter := slice.New(_sliceInputTest1)
+
+	gotLines := []string{}
+	for iter.Next(ctx) {
+		gotLines = append(gotLines, iter.Get(ctx))
+		cancel()
+	}
+
+	assert.Equal(1, len(gotLines))
+	assert.NotNil(iter.Error())
+	assert.ErrorIs(context.Canceled, iter.Error())
+}

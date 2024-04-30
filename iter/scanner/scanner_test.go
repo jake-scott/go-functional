@@ -10,8 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var _scanInputTest1 string = `
-This is some test input with
+var _scanInputTest1 string = `This is some test input with
 multipe lines
 in it and multiple words
 per line.`
@@ -73,6 +72,29 @@ func TestScannerIterPanic(t *testing.T) {
 
 	assert.Contains(iter.Error().Error(), "too many tokens")
 	assert.Contains(iter.Error().Error(), "FOO FOO FOO")
+}
+
+func TestScannerCancelled(t *testing.T) {
+	assert := assert.New(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := bufio.NewScanner(strings.NewReader(_scanInputTest1))
+	s.Split(bufio.ScanLines)
+
+	iter := New(s)
+
+	gotLines := []string{}
+	for iter.Next(ctx) {
+		gotLines = append(gotLines, iter.Get(ctx))
+		cancel()
+	}
+
+	wantLines := (strings.Split(_scanInputTest1, "\n"))[0:1]
+	assert.Equal(wantLines, gotLines)
+
+	assert.NotNil(iter.Error())
+	assert.ErrorIs(context.Canceled, iter.Error())
 }
 
 func TestTooManyTokensError(t *testing.T) {

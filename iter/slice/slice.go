@@ -37,9 +37,11 @@ func (r *Iterator[T]) Next(ctx context.Context) bool {
 		return false
 	}
 
-	if _, ok := <-ctx.Done(); !ok {
+	select {
+	case <-ctx.Done():
 		r.err = ctx.Err()
 		return false
+	default:
 	}
 
 	r.pos++

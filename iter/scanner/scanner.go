@@ -75,6 +75,13 @@ func (i *Iterator) Next(ctx context.Context) (ret bool) {
 		}
 	}()
 
+	select {
+	case <-ctx.Done():
+		i.err = ctx.Err()
+		return false
+	default:
+	}
+
 	return i.scanner.Scan()
 }
 
