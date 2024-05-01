@@ -122,6 +122,8 @@ func (s *Stage[T]) parallelBatchFilter(t Tracer, f FilterFunc[T]) Iterator[T] {
 // Filter the stage's input items.  Returns items wrapped by wrapper which
 // could include the original index of the input items for use in the caller to
 // sort the result.
+//
+// T: input type;   TW: wrapped input type
 func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f FilterFunc[T],
 	wrapper wrapItemFunc[T, TW], unwrapper unwrapItemFunc[TW, T]) []TW {
 
@@ -130,6 +132,7 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 	t = t.SubTracer("parallelization=%d", numParallel)
 	defer t.End()
 
+	// MW is inferred to be the same as TW for a filter..
 	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
 		// write wrapped input values to the query channel
 		func(i uint, t T, ch chan TW) {
@@ -137,7 +140,7 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 			ch <- item
 		},
 
-		// read wrapped values from the query channel, write to the output channel if f() == true
+		// read wrapped values, write to the output channel if f() == true
 		func(item TW, ch chan TW) error {
 			if f(unwrapper(item)) {
 				select {

@@ -232,18 +232,20 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 	chWorker := make(chan TW) // channel towards to workers
 	chOut := make(chan MW)    // worker output channel
 
-	// (1) Write the items to the worker channel in a separate thread
-	// of execution.
+	// (1) Read items from the iterator in a separate goroutine, until done or
+	//     the context expires, then write the items to the worker channel
 	go func() {
 		t := t.SubTracer("reader")
 
 		// close chWorker when done.. this will cause the workers to terminate
+		// when they have processed the items
 		defer func() {
 			closeChanIfOpen(chWorker)
 		}()
 
 		i := 0
 		for iter.Next(ctx) {
+			// run the push function which should write all items to chWorker
 			push(uint(i), iter.Get(ctx), chWorker)
 			i++
 		}
@@ -269,6 +271,8 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 				select {
 				case item, ok := <-chWorker:
 					if ok {
+						// run the pull function which should selectively write
+						// items to chOut depending on functionality
 						err := pull(item, chOut)
 						if err != nil {
 							break readLoop

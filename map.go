@@ -127,12 +127,16 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 	defer t.End()
 
 	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+		// write wrapped input values to the query channel
 		func(i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
 			ch <- item
 		},
 
+		// read wrapped input values, write mapped wrapped output values to
+		// the output channel
 		func(item TW, ch chan MW) error {
+			// Make a MW item from the TW item using a map function
 			itemOut := switcher(item, m(unwrapper(item)))
 			select {
 			case ch <- itemOut:
