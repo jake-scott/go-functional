@@ -267,9 +267,15 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 		readLoop:
 			for {
 				select {
-				case item := <-chWorker:
-					err := pull(item, chOut)
-					if err != nil {
+				case item, ok := <-chWorker:
+					if ok {
+						err := pull(item, chOut)
+						if err != nil {
+							break readLoop
+						}
+					} else {
+
+						// if not OK the read failed on an empty, closed channel
 						break readLoop
 					}
 				case <-ctx.Done():
