@@ -13,7 +13,7 @@ type Iterator[T any] interface {
 	Next(ctx context.Context) bool
 
 	// Get returns current value referred to by the iterator
-	Get(ctx context.Context) T
+	Get() T
 
 	// Error returns a non-nil value if an error occured processing Next()
 	Error() error

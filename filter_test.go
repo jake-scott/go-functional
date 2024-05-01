@@ -73,8 +73,8 @@ func TestCloseChanIfOpen(t *testing.T) {
 	assert.NotPanics(func() { closeChanIfOpen(ch2) })
 }
 
-func isEven(i int) bool {
-	return i%2 == 0
+func isEven(i int) (bool, error) {
+	return i%2 == 0, nil
 }
 
 func TestFilterIntsBatch(t *testing.T) {
@@ -146,7 +146,7 @@ func TestFilterIntsBatch(t *testing.T) {
 					out := []int{}
 					ctx := context.Background()
 					for it.Next(ctx) {
-						out = append(out, it.Get(ctx))
+						out = append(out, it.Get())
 					}
 
 					// order should be preserved in seqential mode or if requested
@@ -226,7 +226,7 @@ func TestFilterIntsStreaming(t *testing.T) {
 				out := []int{}
 				ctx := context.Background()
 				for it.Next(ctx) {
-					out = append(out, it.Get(ctx))
+					out = append(out, it.Get())
 				}
 
 				// order should be preserved in seqential mode
@@ -267,7 +267,7 @@ func TestStalledStreaming(t *testing.T) {
 
 	count := 0
 	for iter.Next(ctx) {
-		_ = iter.Get(ctx)
+		_ = iter.Get()
 		count++
 		cancel()
 	}

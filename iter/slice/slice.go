@@ -29,9 +29,8 @@ func (t *Iterator[T]) Size() uint {
 }
 
 // Next advances the iterator to the next element of the underlying
-// slice.  It returns false when the end of the slice has been reached.
-//
-// The context is not used in this iterator implementation.
+// slice.  It returns false when the end of the slice has been reached or
+// the context is cancelled.
 func (r *Iterator[T]) Next(ctx context.Context) bool {
 	if r.pos >= len(r.s) {
 		return false
@@ -51,7 +50,7 @@ func (r *Iterator[T]) Next(ctx context.Context) bool {
 // Get returns element of the underlying slice that the iterator refers to
 //
 // The context is not used in this iterator implementation.
-func (r *Iterator[T]) Get(ctx context.Context) T {
+func (r *Iterator[T]) Get() T {
 	if r.pos == 0 {
 		var ret T
 		return ret
@@ -60,7 +59,8 @@ func (r *Iterator[T]) Get(ctx context.Context) T {
 	return r.s[r.pos-1]
 }
 
-// Error always retruns nil
+// Error returns the context's error if the context is cancelled
+// during a call to Next()
 func (r *Iterator[T]) Error() error {
 	return r.err
 }

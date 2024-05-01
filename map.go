@@ -13,11 +13,10 @@ import (
 //
 // Example:
 //
-//	func ipAddress(host string) net.IP {
-//	    ip, _ = net.LookupIp(host)
-//		return ip
+//	func ipAddress(host string) (net.IP, error) {
+//	    return net.LookupIp(host)
 //	}
-type MapFunc[T any, M any] func(T) M
+type MapFunc[T any, M any] func(T) (M, error)
 
 // Map processes the stage's input elements by calling m for each element,
 // returning a new stage containing the same number of elements, mapped to
@@ -48,7 +47,7 @@ func Map[T, M any](s *Stage[T], m MapFunc[T, M], opts ...StageOption) *Stage[M] 
 	merged.opts.processOptions(opts...)
 
 	t := merged.tracer("Map")
-	defer t.End()
+	defer t.end()
 
 	var i Iterator[M]
 	switch merged.opts.stageType {
@@ -62,9 +61,9 @@ func Map[T, M any](s *Stage[T], m MapFunc[T, M], opts ...StageOption) *Stage[M] 
 }
 
 // T: input type;  M: mapped type
-func mapBatch[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
-	t = t.SubTracer("batch")
-	defer t.End()
+func mapBatch[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
+	t = t.subTracer("batch")
+	defer t.end()
 
 	if sh, ok := s.i.(Size[T]); ok {
 		s.opts.sizeHint = sh.Size()
@@ -75,12 +74,23 @@ func mapBatch[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 		return mapBatchParallel(t, s, m)
 	}
 
-	t.Msg("Sequential processing")
+	t.msg("Sequential processing")
 
 	out := make([]M, 0, s.opts.sizeHint)
+
+mapLoop:
 	for s.i.Next(s.opts.ctx) {
-		item := s.i.Get(s.opts.ctx)
-		out = append(out, m(item))
+		item := s.i.Get()
+		newItem, err := m(item)
+		switch {
+		case err != nil:
+			if !s.opts.onError(ErrorContextMapFunction, err) {
+				t.msg("map done due to error: %s", err)
+				break mapLoop
+			}
+		default:
+			out = append(out, newItem)
+		}
 	}
 
 	i := slice.New(out)
@@ -88,14 +98,14 @@ func mapBatch[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 }
 
 // T: input type;  M: mapped type
-func mapBatchParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
-	var tParallel Tracer
+func mapBatchParallel[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
+	var tParallel tracer
 
 	var output []M
 	if s.opts.preserveOrder {
-		tParallel = t.SubTracer("parallel, ordered")
+		tParallel = t.subTracer("parallel, ordered")
 
-		results := mapBatchParallelProcessor(tParallel, s, m, orderedWrapper[T], orderedUnwrapper[T], orderedSwitcher[T, M])
+		results := mapBatchParallelProcessor(s, tParallel, m, orderedWrapper[T], orderedUnwrapper[T], orderedSwitcher[T, M])
 
 		// sort by the index of each item[M]
 		slices.SortFunc(results, func(a, b item[M]) int {
@@ -108,25 +118,25 @@ func mapBatchParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator
 			output[i] = v.item
 		}
 	} else {
-		tParallel = t.SubTracer("parallel, unordered")
-		output = mapBatchParallelProcessor(tParallel, s, m, unorderedWrapper[T], unorderedUnwrapper[T], unorderedSwitcher[T, M])
+		tParallel = t.subTracer("parallel, unordered")
+		output = mapBatchParallelProcessor(s, tParallel, m, unorderedWrapper[T], unorderedUnwrapper[T], unorderedSwitcher[T, M])
 	}
 
 	i := slice.New(output)
-	tParallel.End()
+	tParallel.end()
 	return &i
 }
 
 // T: input type;   TW: wrapped input type;   M: mapped type;   MW: wrapped map type
-func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFunc[T, M],
+func mapBatchParallelProcessor[T, TW, M, MW any](s *Stage[T], t tracer, m MapFunc[T, M],
 	wrapper wrapItemFunc[T, TW], unwrapper unwrapItemFunc[TW, T], switcher switcherFunc[TW, M, MW]) []MW {
 
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
-	t = t.SubTracer("parallelization=%d", numParallel)
-	defer t.End()
+	t = t.subTracer("parallelization=%d", numParallel)
+	defer t.end()
 
-	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write wrapped input values to the query channel
 		func(i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
@@ -137,7 +147,13 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 		// the output channel
 		func(item TW, ch chan MW) error {
 			// Make a MW item from the TW item using a map function
-			itemOut := switcher(item, m(unwrapper(item)))
+			mappedValue, err := m(unwrapper(item))
+
+			if err != nil {
+				return err
+			}
+
+			itemOut := switcher(item, mappedValue)
 			select {
 			case ch <- itemOut:
 			case <-s.opts.ctx.Done():
@@ -158,7 +174,7 @@ func mapBatchParallelProcessor[T, TW, M, MW any](t Tracer, s *Stage[T], m MapFun
 }
 
 // T: input type;  M: mapped type
-func mapStreaming[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
+func mapStreaming[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 	if sh, ok := s.i.(Size[T]); ok {
 		s.opts.sizeHint = sh.Size()
 	}
@@ -169,47 +185,61 @@ func mapStreaming[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] 
 	}
 
 	// otherwise just run a simple serial map
-	t = t.SubTracer("streaming, sequential")
+	t = t.subTracer("streaming, sequential")
 
 	ch := make(chan M)
 
 	go func() {
 		t := s.tracer("Map, streaming, sequential background")
-		defer t.End()
+		defer t.end()
 
 	readLoop:
 		for s.i.Next(s.opts.ctx) {
-			item := s.i.Get(s.opts.ctx)
-			mapped := m(item)
-			select {
-			case ch <- mapped:
-			case <-s.opts.ctx.Done():
-				t.Msg("Cancelled")
-				break readLoop
+			item := s.i.Get()
+			mapped, err := m(item)
+
+			switch {
+			case err != nil:
+				if !s.opts.onError(ErrorContextFilterFunction, err) {
+					t.msg("map done due to error: %s", err)
+					break readLoop
+				}
+			default:
+				select {
+				case ch <- mapped:
+				case <-s.opts.ctx.Done():
+					t.msg("Cancelled")
+					break readLoop
+				}
 			}
 		}
 		close(ch)
 	}()
 
 	i := channel.New(ch)
-	t.End()
+	t.end()
 	return &i
 }
 
-func mapStreamingParallel[T, M any](t Tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
+func mapStreamingParallel[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] {
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
-	t = t.SubTracer("streaming, parallel=%d", numParallel)
-	defer t.End()
+	t = t.subTracer("streaming, parallel=%d", numParallel)
+	defer t.end()
 
-	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		func(i uint, t T, ch chan T) {
 			ch <- t
 		},
 
 		func(item T, ch chan M) error {
+			mapped, err := m(item)
+			if err != nil {
+				return err
+			}
+
 			select {
-			case ch <- m(item):
+			case ch <- mapped:
 			case <-s.opts.ctx.Done():
 				return s.opts.ctx.Err()
 			}

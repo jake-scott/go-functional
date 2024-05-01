@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func stringify(i int) string {
-	return fmt.Sprintf("%04d", i)
+func stringify(i int) (string, error) {
+	return fmt.Sprintf("%04d", i), nil
 }
 
 func TestMapIntsBatch(t *testing.T) {
@@ -75,7 +75,7 @@ func TestMapIntsBatch(t *testing.T) {
 					out := []string{}
 					ctx := context.Background()
 					for it.Next(ctx) {
-						out = append(out, it.Get(ctx))
+						out = append(out, it.Get())
 					}
 
 					// order should be preserved in seqential mode or if requested
@@ -151,7 +151,7 @@ func TestMapIntsStreaming(t *testing.T) {
 				out := []string{}
 				ctx := context.Background()
 				for it.Next(ctx) {
-					out = append(out, it.Get(ctx))
+					out = append(out, it.Get())
 				}
 
 				// order should be preserved in seqential mode

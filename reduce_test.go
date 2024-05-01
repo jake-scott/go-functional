@@ -11,8 +11,8 @@ const sumHundredInts = 4682
 func TestReduceOO(t *testing.T) {
 	assert := assert.New(t)
 
-	add := func(a, i int) int {
-		return a + i
+	add := func(a, i int) (int, error) {
+		return a + i, nil
 	}
 
 	// test starting at zero
@@ -29,8 +29,8 @@ func TestReduceProc(t *testing.T) {
 
 	// example of a reduce func that returns a different type than the
 	// stage item type
-	add := func(a float32, i int) float32 {
-		return a + float32(i)
+	add := func(a float32, i int) (float32, error) {
+		return a + float32(i), nil
 	}
 
 	// test starting at zero

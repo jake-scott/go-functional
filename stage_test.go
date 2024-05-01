@@ -137,11 +137,19 @@ func TestParallelProcessor(t *testing.T) {
 	defer cancel()
 
 	iterIn := slice.New(hundredInts)
-	tr := NewTracer(1, "test", func(f string, v ...any) {
+	tr := newTracer(1, "test", func(f string, v ...any) {
 		t.Logf(f, v...)
 	})
 
-	ch := parallelProcessor[int, int, int](ctx, 5, &iterIn, tr,
+	var capturedError error
+	errHandler := func(ec ErrorContext, err error) bool {
+		capturedError = err
+		return true
+	}
+
+	opts := stageOptions{ctx: ctx, onError: errHandler}
+
+	ch := parallelProcessor[int, int, int](opts, 5, &iterIn, tr,
 		func(idx uint, i int, ch chan int) {
 			ch <- i
 		},
@@ -160,6 +168,7 @@ func TestParallelProcessor(t *testing.T) {
 	// results will not be in order..
 	assert.ElementsMatch(hundredInts, results)
 	assert.NoError(goleak.Find())
+	assert.Nil(capturedError)
 }
 
 func TestParallelProcessorCancelled(t *testing.T) {
@@ -169,16 +178,27 @@ func TestParallelProcessorCancelled(t *testing.T) {
 	defer cancel()
 
 	iterIn := slice.New(hundredInts)
-	tr := NewTracer(1, "test", func(f string, v ...any) {
+	tr := newTracer(1, "test", func(f string, v ...any) {
 		t.Logf(f, v...)
 	})
 
-	ch := parallelProcessor[int, int, int](ctx, 5, &iterIn, tr,
+	var capturedError error
+	errHandler := func(ec ErrorContext, err error) bool {
+		capturedError = err
+		return true
+	}
+
+	opts := stageOptions{
+		ctx:     ctx,
+		onError: errHandler,
+	}
+
+	ch := parallelProcessor(opts, 5, &iterIn, tr,
 		func(idx uint, i int, ch chan int) {
 			select {
 			case ch <- i:
 			case <-ctx.Done():
-				tr.Msg("Cancelled1")
+				tr.msg("Cancelled1")
 				return
 			}
 		},
@@ -186,14 +206,15 @@ func TestParallelProcessorCancelled(t *testing.T) {
 			select {
 			case ch <- i:
 			case <-ctx.Done():
-				tr.Msg("Cancelled2")
+				tr.msg("Cancelled2")
 				return ctx.Err()
 			}
 			return nil
 		})
 
 	assert.IsType(make(chan int), ch)
-
 	cancel()
+
 	assert.NoError(goleak.Find())
+	assert.ErrorIs(capturedError, context.Canceled)
 }

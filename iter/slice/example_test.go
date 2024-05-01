@@ -14,7 +14,7 @@ func ExampleIterator() {
 	iter := slice.New(input)
 
 	for iter.Next(ctx) {
-		fmt.Printf("Animal: <%s>\n", iter.Get(ctx))
+		fmt.Printf("Animal: <%s>\n", iter.Get())
 	}
 
 	if err := iter.Error(); err != nil {

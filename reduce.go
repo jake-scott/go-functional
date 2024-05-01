@@ -5,10 +5,10 @@ package functional
 //
 // Example:
 //
-//	func add(a, i int) int {
-//	    return a + i
+//	func add(a, i int) (int, error) {
+//	    return a + i, nil
 //	}
-type ReduceFunc[T any, A any] func(A, T) A
+type ReduceFunc[T any, A any] func(A, T) (A, error)
 
 // Reduce processes the stage's input elements to a single element of the same
 // type, by calling r for every element and passing an accumulator value
@@ -32,11 +32,20 @@ func Reduce[T, A any](s *Stage[T], initial A, r ReduceFunc[T, A], opts ...StageO
 	merged.opts.processOptions(opts...)
 
 	t := merged.tracer("Reduce")
-	defer t.End()
+	defer t.end()
 
 	accum := initial
+	var err error
+
+reduceLoop:
 	for s.i.Next(s.opts.ctx) {
-		accum = r(accum, s.i.Get(s.opts.ctx))
+		accum, err = r(accum, s.i.Get())
+		if err != nil {
+			if !s.opts.onError(ErrorContextFilterFunction, err) {
+				t.msg("reduce done due to error: %s", err)
+				break reduceLoop
+			}
+		}
 	}
 
 	return accum
@@ -44,6 +53,6 @@ func Reduce[T, A any](s *Stage[T], initial A, r ReduceFunc[T, A], opts ...StageO
 
 // Convenience reduction function that returns a slice of elements from the
 // iterator of the pipeline stage.
-func SliceFromIterator[T any](a []T, t T) []T {
-	return append(a, t)
+func SliceFromIterator[T any](a []T, t T) ([]T, error) {
+	return append(a, t), nil
 }

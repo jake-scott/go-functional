@@ -11,16 +11,7 @@ import (
 )
 
 /*
- * This example demonstrates how to use a parallel filter to find Postgres
- * servers on a network that are also running an SSH server.
- *
- * The input is generated and piped to a channel that the initial stage reads
- * from.  Two filters are then used - one to find hosts responding on port
- * 5432 and then another to find the subset of those responding on port 22.
- *
- * Results are streamed between stages so that the scan for port 22 happens
- * at the same time as the scan for port 5432 is going on, as the first stage
- * produces its results.
+ * This example demonstrates how resolve a set of IP addresses to hostnames
  */
 
 const prefix = "10.219.224.0/24"
@@ -45,7 +36,7 @@ func generateIps(cidr string, ch chan netip.Addr) {
 	}()
 }
 
-func toHostname(addr netip.Addr) string {
+func toHostname(addr netip.Addr) (string, error) {
 	hn := addr.String()
 
 	names, err := net.LookupAddr(hn)
@@ -54,7 +45,7 @@ func toHostname(addr netip.Addr) string {
 	}
 
 	time.Sleep(1 * time.Second)
-	return hn
+	return hn, err
 }
 
 func main() {

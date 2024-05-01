@@ -24,7 +24,7 @@ func TestSliceIter(t *testing.T) {
 
 	gotLines := []string{}
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 	}
 
 	assert.Equal(_sliceInputTest1, gotLines)
@@ -55,7 +55,7 @@ func TestSliceIter2(t *testing.T) {
 	assert.Nil(iter.Error())
 
 	// Zero value
-	assert.Equal(iter.Get(ctx), 0)
+	assert.Equal(iter.Get(), 0)
 }
 
 func TestCancel(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCancel(t *testing.T) {
 
 	gotLines := []string{}
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 		cancel()
 	}
 

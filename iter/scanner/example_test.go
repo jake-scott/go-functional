@@ -20,7 +20,7 @@ func ExampleIterator() {
 	iter := scanner.New(s)
 
 	for iter.Next(ctx) {
-		fmt.Printf("Line: <%s>\n", iter.Get(ctx))
+		fmt.Printf("Line: <%s>\n", iter.Get())
 	}
 
 	if err := iter.Error(); err != nil {

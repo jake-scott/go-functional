@@ -29,6 +29,45 @@ const (
 	StreamingStage
 )
 
+// ErrorContext provides error handler callbacks with a hint about where in
+// processing the error occured
+type ErrorContext int
+
+const (
+	// ErrorContextIterator hints that the error occured reading an interator
+	ErrorContextItertator ErrorContext = iota
+
+	// ErrorContextFilterFunction means the error occured in a filter func
+	ErrorContextFilterFunction
+
+	// ErrorContextMapFunction means the error occured in a map func
+	ErrorContextMapFunction
+
+	// ErrorContextReduceFunction means the error occued in a reduce func
+	ErrorContextReduceFunction
+
+	// We don't know which phase of processing the error occured when
+	// the hint it ErrorContextOther
+	ErrorContextOther
+)
+
+// Functions complying with the ErrorHandler prototype can be used to process
+// errors that occur during the pipeline processing functions.  The default
+// handler ignores the error.  A custom handler can be provided using the
+// WithErrorHandler option.
+//
+// Parameters:
+//   - where describes the context in which the error occured
+//   - err is the error to be handled
+//
+// The function should return true if processing should continue regardless,
+// or false to stop processing.
+type ErrorHandler func(where ErrorContext, err error) bool
+
+func nullErrorHandler(ErrorContext, error) bool {
+	return true
+}
+
 var stageCounter atomic.Uint32
 
 // Stage represents one processing phase of a larger pipeline
@@ -50,6 +89,7 @@ type stageOptions struct {
 	tracer         TraceFunc
 	tracing        bool
 	ctx            context.Context
+	onError        ErrorHandler
 }
 
 // StageOptions provide a mechanism to customize how the processing functions
@@ -121,6 +161,19 @@ func WithTracing(enable bool) StageOption {
 	}
 }
 
+// WithErrorHandler installs a custom error handler which will be called
+// from the processing functions when the filter/map/reduce function or
+// an iterator emits an error.
+//
+// The handler should return true to continue processing or false to abort.
+//
+// The handler can stash the error for use in the pipeline's caller.
+func WithErrorHandler(handler ErrorHandler) StageOption {
+	return func(o *stageOptions) {
+		o.onError = handler
+	}
+}
+
 // InheritOptions causes this stage's options to be inherited by the next
 // stage.  The next stage can override these inherited options.  Further
 // inheritence can be disabled by passing this option with a false value.
@@ -146,6 +199,7 @@ func NewStage[T any](i Iterator[T], opts ...StageOption) *Stage[T] {
 		opts: stageOptions{
 			ctx:      context.Background(),
 			sizeHint: DefaultSizeHint,
+			onError:  nullErrorHandler,
 		},
 		id: stageCounter.Add(1),
 	}
@@ -181,11 +235,11 @@ func (s *Stage[T]) Iterator() Iterator[T] {
 	return s.i
 }
 
-func (s *Stage[T]) tracer(description string, v ...any) Tracer {
+func (s *Stage[T]) tracer(description string, v ...any) tracer {
 	if s.opts.tracing {
 		var t T
 		description = fmt.Sprintf("(%T) %s", t, description)
-		return NewTracer(s.id, description, s.opts.tracer, v...)
+		return newTracer(s.id, description, s.opts.tracer, v...)
 	} else {
 		return nullTracer{}
 	}
@@ -205,6 +259,12 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 	// next stage
 	if s.opts.inheritOptions {
 		nextStage.opts = s.opts
+	} else {
+		nextStage.opts = stageOptions{
+			ctx:      context.Background(),
+			sizeHint: DefaultSizeHint,
+			onError:  nullErrorHandler,
+		}
 	}
 
 	// process new options on their own to see if we should inherit
@@ -228,14 +288,18 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 // T:  source item type
 // TW: wrapped source item type
 // MW: wrapped result item type (same as TW for filters, possibly different than TW for maps)
-func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, iter Iterator[T], t Tracer, push func(uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
+func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter Iterator[T], t tracer,
+	push func(uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
+
 	chWorker := make(chan TW) // channel towards to workers
 	chOut := make(chan MW)    // worker output channel
+
+	ctx, cancel := context.WithCancel(opts.ctx)
 
 	// (1) Read items from the iterator in a separate goroutine, until done or
 	//     the context expires, then write the items to the worker channel
 	go func() {
-		t := t.SubTracer("reader")
+		t := t.subTracer("reader")
 
 		// close chWorker when done.. this will cause the workers to terminate
 		// when they have processed the items
@@ -246,11 +310,18 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 		i := 0
 		for iter.Next(ctx) {
 			// run the push function which should write all items to chWorker
-			push(uint(i), iter.Get(ctx), chWorker)
+			push(uint(i), iter.Get(), chWorker)
 			i++
 		}
 
-		t.End()
+		// if there is an iterator read error, report it to the error handler
+		// even though there isn't anything we can do to abort the next stages
+		// .. we can at least stop sending new items
+		if iter.Error() != nil {
+			opts.onError(ErrorContextItertator, iter.Error())
+		}
+
+		t.end()
 	}()
 
 	// (2) Start worker go-routines.  These read items from chWorker until that
@@ -261,10 +332,10 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 
 		i := i
 		go func() {
-			t := t.SubTracer("processor %d", i)
+			t := t.subTracer("processor %d", i)
 
 			defer wg.Done()
-			defer t.End()
+			defer t.end()
 
 		readLoop:
 			for {
@@ -275,7 +346,10 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 						// items to chOut depending on functionality
 						err := pull(item, chOut)
 						if err != nil {
-							break readLoop
+							if !opts.onError(ErrorContextOther, err) {
+								cancel()
+								continue
+							}
 						}
 					} else {
 
@@ -283,6 +357,7 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 						break readLoop
 					}
 				case <-ctx.Done():
+					t.msg("cancelled")
 					break readLoop
 				}
 			}
@@ -292,12 +367,13 @@ func parallelProcessor[T, TW, MW any](ctx context.Context, numParallel uint, ite
 	// (3) Wait for the workers in a separate go-routine and close the result
 	// channel once they are all done
 	go func() {
-		t := t.SubTracer("wait for processors")
+		t := t.subTracer("wait for processors")
 
 		wg.Wait()
 		close(chOut)
 
-		t.End()
+		t.end()
+		cancel()
 	}()
 
 	return chOut

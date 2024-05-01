@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-type Tracer interface {
-	SubTracer(description string, v ...any) Tracer
-	Msg(format string, v ...any)
-	End()
+type tracer interface {
+	subTracer(description string, v ...any) tracer
+	msg(format string, v ...any)
+	end()
 }
 
 // TraceFunc defines the function prototype of a tracing function
@@ -27,7 +27,7 @@ var DefaultTracer = func(format string, v ...any) {
 	fmt.Fprintf(os.Stderr, "<TRACE> "+format+"\n", v...)
 }
 
-type tracer struct {
+type realTracer struct {
 	begin       time.Time
 	description string
 	ids         []uint32
@@ -35,7 +35,17 @@ type tracer struct {
 	traceFunc   TraceFunc
 }
 
-func NewTracer(id uint32, description string, f TraceFunc, v ...any) *tracer {
+// newTracer creates a new tracer with a given ID and description.  If
+// the tracefunc f is nil, DefaultTracer is used to process trace calls.
+// The optional parameters v are used as fmt.Printf parameters to format
+// the description.
+// Usually one tracer will be created for a transation, and sub-routines will
+// create new tracers with SubTracer().
+//
+// Example:
+//
+//	parentTracer := newTracer(1, "parent", nil)
+func newTracer(id uint32, description string, f TraceFunc, v ...any) *realTracer {
 	if f == nil {
 		f = DefaultTracer
 	}
@@ -43,7 +53,7 @@ func NewTracer(id uint32, description string, f TraceFunc, v ...any) *tracer {
 
 	description = fmt.Sprintf(description, v...)
 
-	t := &tracer{
+	t := &realTracer{
 		begin:       now,
 		description: description,
 		ids:         []uint32{id},
@@ -54,7 +64,7 @@ func NewTracer(id uint32, description string, f TraceFunc, v ...any) *tracer {
 	return t
 }
 
-func (t *tracer) id() string {
+func (t *realTracer) id() string {
 	idStrings := make([]string, len(t.ids))
 	for i, n := range t.ids {
 		idStrings[i] = strconv.Itoa(int(n))
@@ -62,12 +72,21 @@ func (t *tracer) id() string {
 	return strings.Join(idStrings, ".")
 }
 
-func (t *tracer) start() {
+func (t *realTracer) start() {
 	t.begin = time.Now()
 	t.traceFunc("%s: START [stage #%s] %s", t.begin.Format(time.RFC3339), t.id(), t.description)
 }
 
-func (t *tracer) SubTracer(description string, v ...any) Tracer {
+// subTracer returns a new tracer based on t, with a new sub ID
+// description is formatted with the optional v parameters, and
+// added to the description of the parent.
+//
+// Example:
+//
+//	childTracer1 := parentTracer.subTracer("child %d", 1)
+//	childTracer2 := parentTracer.subTracer("child %d", 2)
+//	childTracer2a := chileTracer2.subTracer("grandchild %d", 1)
+func (t *realTracer) subTracer(description string, v ...any) tracer {
 	subId := t.subids.Add(1)
 
 	t2 := *t
@@ -79,7 +98,8 @@ func (t *tracer) SubTracer(description string, v ...any) Tracer {
 	return &t2
 }
 
-func (t *tracer) Msg(format string, v ...any) {
+// msg
+func (t *realTracer) msg(format string, v ...any) {
 	var args []any = []any{
 		time.Now().Format(time.RFC3339), t.id(), t.description,
 	}
@@ -87,12 +107,12 @@ func (t *tracer) Msg(format string, v ...any) {
 	t.traceFunc("%s: MSG [stage #%s] %s: "+format, args...)
 }
 
-func (t *tracer) End() {
+func (t *realTracer) end() {
 	t.traceFunc("%s: END [stage #%s] %s", time.Now().Format(time.RFC3339), t.id(), t.description)
 }
 
 type nullTracer struct{}
 
-func (t nullTracer) SubTracer(description string, v ...any) Tracer { return t }
-func (t nullTracer) Msg(string, ...any)                            {}
-func (t nullTracer) End()                                          {}
+func (t nullTracer) subTracer(description string, v ...any) tracer { return t }
+func (t nullTracer) msg(string, ...any)                            {}
+func (t nullTracer) end()                                          {}

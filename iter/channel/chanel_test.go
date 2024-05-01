@@ -31,7 +31,7 @@ func TestChannelIter(t *testing.T) {
 	iter := New(ch)
 	gotLines := []string{}
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 	}
 
 	assert.Equal(_channelInputTest1, gotLines)
@@ -57,7 +57,7 @@ func TestChannelIteratorTimeout(t *testing.T) {
 	gotLines := []string{}
 	defer cancel()
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 	}
 
 	// the context should have timed out

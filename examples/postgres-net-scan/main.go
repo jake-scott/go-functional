@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"time"
 
 	"github.com/jake-scott/go-functional"
@@ -46,32 +47,33 @@ func generateIps(cidr string, ch chan netip.Addr) {
 }
 
 // Find hosts listening on port 5432
-func pingPostgres(addr netip.Addr) bool {
+func pingPostgres(addr netip.Addr) (bool, error) {
 	a := addr.String() + ":5432"
 
 	con, err := net.DialTimeout("tcp", a, time.Second*timeout)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	con.Close()
-	return true
+	return true, nil
 }
 
 // Find hosts listening on port 5432
-func pingSsh(addr netip.Addr) bool {
+func pingSsh(addr netip.Addr) (bool, error) {
 	a := addr.String() + ":22"
 
 	con, err := net.DialTimeout("tcp", a, time.Second*timeout)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	con.Close()
-	return true
+	return true, nil
 }
 
-func toHostname(addr netip.Addr) string {
+func toHostname(addr netip.Addr) (string, error) {
+
 	hn := addr.String()
 
 	names, err := net.LookupAddr(hn)
@@ -79,7 +81,11 @@ func toHostname(addr netip.Addr) string {
 		hn = names[0]
 	}
 
-	return hn
+	return hn, err
+}
+
+type myError struct {
+	err error
 }
 
 func main() {
@@ -90,7 +96,17 @@ func main() {
 	// generate IP addresses in the background
 	go generateIps(prefix, ch)
 
+	noError := myError{err: nil}
+	var firstError atomic.Value
+	firstError.Store(noError)
+
+	errHandler := func(ec functional.ErrorContext, err error) bool {
+		firstError.CompareAndSwap(noError, myError{err})
+		return true
+	}
+
 	result := functional.NewChannelStage(ch,
+		functional.WithErrorHandler(errHandler),
 		functional.WithContext(ctx),
 		functional.InheritOptions(true),
 		functional.WithTracing(true),
@@ -101,10 +117,15 @@ func main() {
 
 	result2 := functional.Map(result, toHostname, functional.WithTracing(true), functional.SizeHint(10))
 
+	fe := firstError.Load().(myError)
+	if fe.err != nil {
+		fmt.Printf("Pipeline error: %s\n", fe.err)
+	}
+
 	iter := result2.Iterator()
 	countAlive := 0
 	for iter.Next(ctx) {
-		fmt.Printf("Alive: %s\n", iter.Get(ctx))
+		fmt.Printf("Alive: %s\n", iter.Get())
 		countAlive++
 	}
 

@@ -58,10 +58,9 @@ func New(scanner Scanner) Iterator {
 
 // Next advances the iterator to the next element (scanner token) by
 // calling Scanner.Scan().  It returns false if the end of the input is reached
-// or an error is encountered.  If the scanner panics, Next returns false
-// and Error() will return the message from the scanner.
-//
-// The context is not used in this iterator implementation.
+// or an error is encountered including cancellation of the context.
+// If the scanner panics, Next returns false and Error() will return the
+// message from the scanner.
 func (i *Iterator) Next(ctx context.Context) (ret bool) {
 	defer func() {
 		switch err := recover().(type) {
@@ -89,12 +88,13 @@ func (i *Iterator) Next(ctx context.Context) (ret bool) {
 // to Next(), as a string.
 //
 // The context is not used in this iterator implementation.
-func (i *Iterator) Get(ctx context.Context) string {
+func (i *Iterator) Get() string {
 	return i.scanner.Text()
 }
 
 // Error returns the panic message from the scanner if one occured during
-// a Next() call.  Otherwise, Error calls the Scanner's Err() method, which
+// a Next() call, or the cancellation message if the context was cancelled.
+// Otherwise, Error calls the Scanner's Err() method, which
 // returns nil if there are no errors or if the end of input is reached,
 // otherwise the first error encounterd by the scanner.
 func (i *Iterator) Error() error {

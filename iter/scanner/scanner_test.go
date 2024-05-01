@@ -25,12 +25,12 @@ func TestScannerIter(t *testing.T) {
 	iter := New(s)
 
 	// Get should return the zero value until we call Next
-	x := iter.Get(ctx)
+	x := iter.Get()
 	assert.Equalf("", x, "Expected string zero value")
 
 	gotLines := []string{}
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 	}
 
 	wantLines := strings.Split(_scanInputTest1, "\n")
@@ -86,7 +86,7 @@ func TestScannerCancelled(t *testing.T) {
 
 	gotLines := []string{}
 	for iter.Next(ctx) {
-		gotLines = append(gotLines, iter.Get(ctx))
+		gotLines = append(gotLines, iter.Get())
 		cancel()
 	}
 

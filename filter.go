@@ -12,12 +12,15 @@ import (
 // returns true if it is to be included or false if the element is to be
 // excluded from the result set.
 //
+// If an error is returned, it is passed to the stage's error handler
+// function which may elect to continue or abort processing.
+//
 // Example:
 //
-//	func findEvenInts(i int) bool {
-//	    return i%2 == 0
+//	func findEvenInts(i int) (bool, error) {
+//	    return i%2 == 0, nil
 //	}
-type FilterFunc[T any] func(T) bool
+type FilterFunc[T any] func(T) (bool, error)
 
 // Filter is the non-OO version of Stage.Filter().
 func Filter[T any](s *Stage[T], f FilterFunc[T], opts ...StageOption) *Stage[T] {
@@ -43,7 +46,7 @@ func (s *Stage[T]) Filter(f FilterFunc[T], opts ...StageOption) *Stage[T] {
 	merged.opts.processOptions(opts...)
 
 	t := merged.tracer("Filter")
-	defer t.End()
+	defer t.end()
 
 	// Run a batch or streaming filter.  The streaming filter will return
 	// immediately.
@@ -58,9 +61,9 @@ func (s *Stage[T]) Filter(f FilterFunc[T], opts ...StageOption) *Stage[T] {
 	return s.nextStage(i, opts...)
 }
 
-func (s *Stage[T]) filterBatch(t Tracer, f FilterFunc[T]) Iterator[T] {
-	tBatch := t.SubTracer("batch")
-	defer tBatch.End()
+func (s *Stage[T]) filterBatch(t tracer, f FilterFunc[T]) Iterator[T] {
+	tBatch := t.subTracer("batch")
+	defer tBatch.end()
 
 	if sh, ok := s.i.(Size[T]); ok {
 		s.opts.sizeHint = sh.Size()
@@ -71,13 +74,30 @@ func (s *Stage[T]) filterBatch(t Tracer, f FilterFunc[T]) Iterator[T] {
 		return s.parallelBatchFilter(tBatch, f)
 	}
 
-	t.Msg("Sequential processing")
+	t.msg("Sequential processing")
 
 	out := make([]T, 0, s.opts.sizeHint)
+
+filterLoop:
 	for s.i.Next(s.opts.ctx) {
-		item := s.i.Get(s.opts.ctx)
-		if f(item) {
+		item := s.i.Get()
+		keep, err := f(item)
+		switch {
+		case err != nil:
+			if !s.opts.onError(ErrorContextFilterFunction, err) {
+				t.msg("filter done due to error: %s", err)
+				break filterLoop
+			}
+		case keep:
 			out = append(out, item)
+		}
+	}
+
+	if s.i.Error() != nil {
+		// if there is an iterator read error ..
+		if !s.opts.onError(ErrorContextItertator, s.i.Error()) {
+			// clear the output slice if we are told not to continue
+			out = []T{}
 		}
 	}
 
@@ -86,12 +106,12 @@ func (s *Stage[T]) filterBatch(t Tracer, f FilterFunc[T]) Iterator[T] {
 	return &i
 }
 
-func (s *Stage[T]) parallelBatchFilter(t Tracer, f FilterFunc[T]) Iterator[T] {
-	var tParallel Tracer
+func (s *Stage[T]) parallelBatchFilter(t tracer, f FilterFunc[T]) Iterator[T] {
+	var tParallel tracer
 
 	var output []T
 	if s.opts.preserveOrder {
-		tParallel = t.SubTracer("parallel, ordered")
+		tParallel = t.subTracer("parallel, ordered")
 
 		// when preserving order, we call parallelBatchFilterProcessor[T, item[T]],
 		// so we receive a []item[T] as a return value
@@ -110,12 +130,12 @@ func (s *Stage[T]) parallelBatchFilter(t Tracer, f FilterFunc[T]) Iterator[T] {
 	} else {
 		// when not preserving order, we call parallelBatchFilterProcessor[T, T],
 		// and so we receive a []T as a return value
-		tParallel = t.SubTracer("parallel, unordered")
+		tParallel = t.subTracer("parallel, unordered")
 		output = parallelBatchFilterProcessor(s, tParallel, f, unorderedWrapper[T], unorderedUnwrapper[T])
 	}
 
 	i := slice.New(output)
-	tParallel.End()
+	tParallel.end()
 	return &i
 }
 
@@ -124,16 +144,16 @@ func (s *Stage[T]) parallelBatchFilter(t Tracer, f FilterFunc[T]) Iterator[T] {
 // sort the result.
 //
 // T: input type;   TW: wrapped input type
-func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f FilterFunc[T],
+func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t tracer, f FilterFunc[T],
 	wrapper wrapItemFunc[T, TW], unwrapper unwrapItemFunc[TW, T]) []TW {
 
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
-	t = t.SubTracer("parallelization=%d", numParallel)
-	defer t.End()
+	t = t.subTracer("parallelization=%d", numParallel)
+	defer t.end()
 
 	// MW is inferred to be the same as TW for a filter..
-	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write wrapped input values to the query channel
 		func(i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
@@ -142,7 +162,13 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 
 		// read wrapped values, write to the output channel if f() == true
 		func(item TW, ch chan TW) error {
-			if f(unwrapper(item)) {
+			keep, err := f(unwrapper(item))
+
+			if err != nil {
+				return err
+			}
+
+			if keep {
 				select {
 				case ch <- item:
 				case <-s.opts.ctx.Done():
@@ -151,6 +177,14 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t Tracer, f Filter
 			}
 			return nil
 		})
+
+	if s.i.Error() != nil {
+		// if there is an iterator read error ..
+		if !s.opts.onError(ErrorContextItertator, s.i.Error()) {
+			// return no items if we are told not to continue
+			return []TW{}
+		}
+	}
 
 	// Back in the main thread, read results until the result channel has been
 	// closed by a go-routine started by parallelProcessor()
@@ -177,7 +211,7 @@ func closeChanIfOpen[T any](ch chan T) {
 	}
 }
 
-func (s *Stage[T]) filterStreaming(t Tracer, f FilterFunc[T]) Iterator[T] {
+func (s *Stage[T]) filterStreaming(t tracer, f FilterFunc[T]) Iterator[T] {
 	if sh, ok := s.i.(Size[T]); ok {
 		s.opts.sizeHint = sh.Size()
 	}
@@ -188,41 +222,56 @@ func (s *Stage[T]) filterStreaming(t Tracer, f FilterFunc[T]) Iterator[T] {
 	}
 
 	// otherwise just run a simple serial filter
-	t = t.SubTracer("streaming, sequential")
+	t = t.subTracer("streaming, sequential")
 
 	ch := make(chan T)
 
 	go func() {
 		t := s.tracer("processor")
-		defer t.End()
+		defer t.end()
 
 	readLoop:
 		for s.i.Next(s.opts.ctx) {
-			item := s.i.Get(s.opts.ctx)
-			if f(item) {
+			item := s.i.Get()
+			keep, err := f(item)
+
+			switch {
+			case err != nil:
+				if !s.opts.onError(ErrorContextFilterFunction, err) {
+					t.msg("filter done due to error: %s", err)
+					break readLoop
+				}
+			case keep:
 				select {
 				case ch <- item:
 				case <-s.opts.ctx.Done():
-					t.Msg("Cancelled")
+					t.msg("Cancelled")
 					break readLoop
 				}
 			}
 		}
 		close(ch)
+
+		// if there is an iterator read error, report it even though we
+		// can't abort the next stage; at least we can stop sending items
+		// to it by way of having closed ch
+		if s.i.Error() != nil {
+			s.opts.onError(ErrorContextItertator, s.i.Error())
+		}
 	}()
 
 	i := channel.New(ch)
-	t.End()
+	t.end()
 	return &i
 }
 
-func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T] {
+func (s *Stage[T]) parallelStreamingFilter(t tracer, f FilterFunc[T]) Iterator[T] {
 	numParallel := min(s.opts.sizeHint, s.opts.maxParallelism)
 
-	t = t.SubTracer("streaming, parallel=%d", numParallel)
-	defer t.End()
+	t = t.subTracer("streaming, parallel=%d", numParallel)
+	defer t.end()
 
-	chOut := parallelProcessor(s.opts.ctx, numParallel, s.i, t,
+	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write input values to the query channel
 		func(i uint, t T, ch chan T) {
 			ch <- t
@@ -230,7 +279,11 @@ func (s *Stage[T]) parallelStreamingFilter(t Tracer, f FilterFunc[T]) Iterator[T
 
 		// read values from the query channel, write to the output channel if f() == true
 		func(t T, ch chan T) error {
-			if f(t) {
+			keep, err := f(t)
+			if err != nil {
+				return err
+			}
+			if keep {
 				select {
 				case ch <- t:
 				case <-s.opts.ctx.Done():

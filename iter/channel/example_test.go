@@ -27,7 +27,7 @@ func ExampleIterator() {
 
 	iter := channel.New(ch)
 	for iter.Next(ctx) {
-		fmt.Printf("item: %d\n", iter.Get(ctx))
+		fmt.Printf("item: %d\n", iter.Get())
 	}
 
 	if err := iter.Error(); err != nil {

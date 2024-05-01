@@ -13,7 +13,7 @@ type Iterator[T any] struct {
 }
 
 // New returns an implementation of Iterator that traverses the
-// provided channel until reading the channel returns an error or the channel
+// provided channel until reading the channel returns an error,  or the channel
 // is closed.
 //
 // ChannelIterator does not support the SizeHint interface
@@ -52,7 +52,7 @@ func (i *Iterator[T]) Next(ctx context.Context) bool {
 // or the zero value of type T if Next has not been called.
 //
 // The context is not used by this method.
-func (i *Iterator[T]) Get(ctx context.Context) T {
+func (i *Iterator[T]) Get() T {
 	// return the zero value if called before Next()
 	if i.item == nil {
 		var ret T
