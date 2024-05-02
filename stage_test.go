@@ -218,3 +218,44 @@ func TestParallelProcessorCancelled(t *testing.T) {
 	assert.NoError(goleak.Find())
 	assert.ErrorIs(capturedError, context.Canceled)
 }
+
+func TestCloseChanIfOpen(t *testing.T) {
+	assert := assert.New(t)
+
+	// test with an unbuffered channel:
+	//  after calling closeChanIfOpen, writes and closes should panic but
+	//  further closeChanIfOpen calls should not
+	ch1 := make(chan string)
+	closeChanIfOpen(ch1)
+	assert.Panics(func() { ch1 <- "test" })
+	assert.Panics(func() { close(ch1) })
+	assert.NotPanics(func() { closeChanIfOpen(ch1) })
+
+	// test with an unbuffered channel that we pre-close:
+	//   writes and closes should panic bug closeChanIfOpen should not
+	ch2 := make(chan string)
+	close(ch2)
+	assert.Panics(func() { ch2 <- "test" })
+	assert.Panics(func() { close(ch2) })
+	assert.NotPanics(func() { closeChanIfOpen(ch2) })
+
+	// test with a buffered channel:
+	//   after calling closeChanIfOpen, writes and closes should panic but
+	//   further closeChanIfOpen calls should not
+	ch3 := make(chan string, 10)
+	assert.NotPanics(func() { ch3 <- "test" })
+	assert.NotPanics(func() { ch3 <- "test" })
+	closeChanIfOpen(ch3)
+	assert.Panics(func() { ch3 <- "test" })
+	assert.Panics(func() { close(ch3) })
+	assert.NotPanics(func() { closeChanIfOpen(ch3) })
+
+	//same as above but we pre-close the cahnnel
+	ch4 := make(chan string, 10)
+	assert.NotPanics(func() { ch4 <- "test" })
+	assert.NotPanics(func() { ch4 <- "test" })
+	close(ch4)
+	assert.Panics(func() { ch4 <- "test" })
+	assert.Panics(func() { close(ch4) })
+	assert.NotPanics(func() { closeChanIfOpen(ch2) })
+}

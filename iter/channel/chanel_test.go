@@ -30,6 +30,10 @@ func TestChannelIter(t *testing.T) {
 
 	iter := New(ch)
 	gotLines := []string{}
+
+	// before a Next() call it should return the zero value..
+	assert.Equal("", iter.Get())
+
 	for iter.Next(ctx) {
 		gotLines = append(gotLines, iter.Get())
 	}

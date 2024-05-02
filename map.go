@@ -93,6 +93,14 @@ mapLoop:
 		}
 	}
 
+	if s.i.Error() != nil {
+		// if there is an iterator read error ..
+		if !s.opts.onError(ErrorContextItertator, s.i.Error()) {
+			// clear the output slice if we are told not to continue
+			out = []M{}
+		}
+	}
+
 	i := slice.New(out)
 	return &i
 }
@@ -209,11 +217,20 @@ func mapStreaming[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] 
 				case ch <- mapped:
 				case <-s.opts.ctx.Done():
 					t.msg("Cancelled")
+					s.opts.onError(ErrorContextOther, s.opts.ctx.Err())
 					break readLoop
 				}
 			}
 		}
 		close(ch)
+
+		// if there is an iterator read error, report it even though we
+		// can't abort the next stage; at least we can stop sending items
+		// to it by way of having closed ch
+		if s.i.Error() != nil {
+			s.opts.onError(ErrorContextItertator, s.i.Error())
+		}
+
 	}()
 
 	i := channel.New(ch)

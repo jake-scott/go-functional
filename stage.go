@@ -29,6 +29,17 @@ const (
 	StreamingStage
 )
 
+func (t StageType) String() string {
+	switch t {
+	default:
+		return "unknown"
+	case BatchStage:
+		return "Batch"
+	case StreamingStage:
+		return "Streaming"
+	}
+}
+
 // ErrorContext provides error handler callbacks with a hint about where in
 // processing the error occured
 type ErrorContext int
@@ -358,6 +369,7 @@ func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter 
 					}
 				case <-ctx.Done():
 					t.msg("cancelled")
+					opts.onError(ErrorContextOther, ctx.Err())
 					break readLoop
 				}
 			}
@@ -377,4 +389,19 @@ func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter 
 	}()
 
 	return chOut
+}
+
+func closeChanIfOpen[T any](ch chan T) {
+	ok := true
+	select {
+	case _, ok = <-ch:
+	default:
+	}
+	if ok {
+		defer func() {
+			_ = recover()
+		}()
+
+		close(ch)
+	}
 }

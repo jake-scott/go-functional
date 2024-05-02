@@ -42,9 +42,15 @@ func TestScannerIter(t *testing.T) {
 // Scanner wrapper that always panncs in Scan()
 type panicScanner struct {
 	bufio.Scanner
+	panicWithError bool
 }
 
 func (thing *panicScanner) Scan() bool {
+	if thing.panicWithError {
+		panic(errors.New("FOO PANIC"))
+
+	}
+
 	panic("FOO FOO FOO")
 }
 func TestScannerIterPanic(t *testing.T) {
@@ -72,6 +78,33 @@ func TestScannerIterPanic(t *testing.T) {
 
 	assert.Contains(iter.Error().Error(), "too many tokens")
 	assert.Contains(iter.Error().Error(), "FOO FOO FOO")
+}
+
+func TestScannerIterPanicWithError(t *testing.T) {
+	assert := assert.New(t)
+	ctx := context.Background()
+
+	thing := bufio.NewScanner(strings.NewReader(_scanInputTest1))
+	foo := panicScanner{Scanner: *thing, panicWithError: true}
+
+	iter := New(&foo)
+
+	nGood := 0
+	// should panic and return false
+	for iter.Next(ctx) {
+		nGood++
+	}
+
+	assert.Equalf(0, nGood, "zero good calls to Next() expected")
+
+	// should be an error
+	assert.NotNil(iter.Error())
+
+	// that should be our error from catching the panic
+	assert.IsType(iter.Error(), ErrTooManyTokens{})
+
+	assert.Contains(iter.Error().Error(), "too many tokens")
+	assert.Contains(iter.Error().Error(), "FOO PANIC")
 }
 
 func TestScannerCancelled(t *testing.T) {

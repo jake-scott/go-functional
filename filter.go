@@ -178,6 +178,13 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t tracer, f Filter
 			return nil
 		})
 
+	// Back in the main thread, read results until the result channel has been
+	// closed by a go-routine started by parallelProcessor()
+	items := make([]TW, 0, s.opts.sizeHint)
+	for i := range chOut {
+		items = append(items, i)
+	}
+
 	if s.i.Error() != nil {
 		// if there is an iterator read error ..
 		if !s.opts.onError(ErrorContextItertator, s.i.Error()) {
@@ -186,29 +193,7 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t tracer, f Filter
 		}
 	}
 
-	// Back in the main thread, read results until the result channel has been
-	// closed by a go-routine started by parallelProcessor()
-	items := make([]TW, 0, s.opts.sizeHint)
-	for i := range chOut {
-		items = append(items, i)
-	}
-
 	return items
-}
-
-func closeChanIfOpen[T any](ch chan T) {
-	ok := true
-	select {
-	case _, ok = <-ch:
-	default:
-	}
-	if ok {
-		defer func() {
-			_ = recover()
-		}()
-
-		close(ch)
-	}
 }
 
 func (s *Stage[T]) filterStreaming(t tracer, f FilterFunc[T]) Iterator[T] {
@@ -246,6 +231,7 @@ func (s *Stage[T]) filterStreaming(t tracer, f FilterFunc[T]) Iterator[T] {
 				case ch <- item:
 				case <-s.opts.ctx.Done():
 					t.msg("Cancelled")
+					s.opts.onError(ErrorContextOther, s.opts.ctx.Err())
 					break readLoop
 				}
 			}
