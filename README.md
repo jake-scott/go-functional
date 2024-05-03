@@ -49,15 +49,15 @@ people := []Person{
 
 // Filter adults
 adults := functional.NewSliceStage(people).
-    Filter(func(p Person) bool { return p.Age >= 30 })
+    Filter(func(p Person) (bool, error) { return p.Age >= 30, nil })
 
 // Map names to uppercase
-names := functional.Map(adults, func(p Person) string { return strings.ToUpper(p.Name) })
+names := functional.Map(adults, func(p Person) (string, error) { return strings.ToUpper(p.Name), nil })
 
 // Iterate over results
 ctx := context.Background()
 for names.Iterator().Next(ctx) {
-    fmt.Println(names.Iterator().Get(ctx)) // Output: ALICE, CHARLIE
+    fmt.Println(names.Iterator().Get()) // Output: ALICE, CHARLIE
 }
 ```
 
@@ -155,13 +155,13 @@ The object-oriented interface allows for chaining of multiple processing stages,
 for example:
 
 ```go
-over25 := func(p person) bool {
-    return p.age > 25
+over25 := func(p person) (bool, error) {
+    return p.age > 25, nil
 }
 
-personCapitalize := func(p person) person {
+personCapitalize := func(p person) (person, error) {
     p.name = strings.ToUpper(p.name)
-    return p
+    return p, nil
 }
 
 results := functional.NewSliceStage(people).
@@ -174,8 +174,8 @@ of a new type. In that case, the procedural interface must be used at least for
 that stage:
 
 ```go
-getName := func(p person) string {
-    return p.name
+getName := func(p person) (string, error) {
+    return p.name, nil
 }
 
 results1 := functional.NewSliceStage(people).
@@ -193,7 +193,7 @@ The caller reads results from the Iterator from the last pipeline stage:
 iter := results.Iterator()
 ctx := context.Background()
 for iter.Next(ctx) {
-    fmt.Printf("P: %+v\n", iter.Get(ctx))
+    fmt.Printf("P: %+v\n", iter.Get())
 }
 
 // output:
@@ -220,7 +220,7 @@ results are produced.
 For example:
 ```go
 // DNS lookups are slow...
-func toHostname(addr netip.Addr) string {
+func toHostname(addr netip.Addr) (string, error) {
     hn := addr.String()
 
     names, err := net.LookupAddr(hn)
@@ -228,7 +228,7 @@ func toHostname(addr netip.Addr) string {
         hn = names[0]
     }
 
-    return hn
+    return hn, nil
 }
 
 ch := make(chan netip.Addr)
@@ -242,7 +242,7 @@ results := functional.Map(stage, toHostname, functional.ProcessingType(functiona
 // read results as they are produced by Map()
 iter := results.Iterator()
 for iter.Next(ctx) {
-    fmt.Println(iter.Get(ctx))
+    fmt.Println(iter.Get())
 }
 ```
 
@@ -289,11 +289,11 @@ the provided options by future stages. These inherited options can then be
 overridden per processing function. For example:
 
 ```go
-join := func(a, b string) string {
+join := func(a, b string) (string, error) {
     if a == "" {
-        return b
+        return b, nil
     } else {
-        return fmt.Sprintf("%s, %s", a, b)
+        return fmt.Sprintf("%s, %s", a, b), nil
     }
 }
 
@@ -312,20 +312,47 @@ effect.
 
 ## Contexts
 
-A context can be passed to any stage, which allows the pipeline to be canceled
-when the context is canceled or expires. The iterator `Next()` and `Get()`
-methods also accept a context to enable the interruption of blocking reads
-(e.g., on channels or scanners). The processing functions pass the stage context
-to the iterator methods, and the caller must also pass a context to these
+A context can be passed to any stage using the `WithContext` option.  This 
+allows the pipeline to be canceled when the context is canceled or expires.
+The iterator `Next()` method also accept a context to enable the interruption of
+blocking reads (e.g., on channels or scanners). The processing functions pass the stage context to the iterator methods, and the caller must also pass a context to these
 methods when extracting the results from the pipeline.
 
-It's recommended to use a context for pipelines or stages that involve parallel
+It is recommended to use a context for pipelines or stages that involve parallel
 or streaming stages to avoid goroutine leaks.
+
+## Error handling
+
+There are two sources of errors that can occur during processing:
+ * The source iterator (eg. an error reading from a network)
+ * User supplied filter/map/reduce functions
+
+go-functional runs an error handler callback whenever one of these conditions is
+encountered.  The error handler can indicate that the pipeline processing should continue
+or be aborted by returning true (continue) or false (abort).  The default error handler
+does nothing and indicates that processing should continue.
+
+A custom error handler can be passed as an option to any stage, eg:
+
+```go
+func logErrorHandler(ec functional.ErrorContext, err error) bool {
+	log.Printf("Error in %v: %s\n", ec, err)
+	return false    // abort processing
+}
+
+stage := functional.NewSliceStage(people, functional.WithErrorHandler(logErrorHandler))
+```
+
+It is possible to have the error handler stash the error for retreival after the
+pipeline returns control to the caller.
+
 
 # API Reference
 
 For detailed information on functions and types, please refer to the
 [API documentation](https://pkg.go.dev/mod/github.com/jake-scott/go-functional)
+
+Test coverage is [available here](https://jake-scott.github.io/go-functional/coverage.html).
 
 # License
 
