@@ -1,23 +1,37 @@
-
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: Checks
 
 on:
   push:
-    branches: [ "develop" ]
   pull_request:
-    branches: [ "develop" ]
 
+permissions:
+  contents: read
+    
 jobs:
 
-  linux-tests:
+  consistency-checks:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+  
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.22.x
+
+      - name: Code format check
+        run: ./.github/scripts/gofmt
+
+      - uses: dominikh/staticcheck-action@v1.3.1
+
+  basic-tests:
+    name: Basic tests
     strategy:
       matrix:
-#        go-version: ['1.21.x', '1.22.x' ]
-        go-version: ['1.21.x' ]
+        os: ['windows-latest', 'ubuntu-latest']
+        go-version: ['1.21.x', '1.22.x' ]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
@@ -38,21 +52,3 @@ jobs:
       uses: vladopajic/go-test-coverage@v2
       with:
         config: ./.testcoverage.yml
-  
-  # windows-tests:
-  #   runs-on: windows-latest
-  #   strategy:
-  #     matrix:
-  #       go-version: ['1.21.x', '1.22.x' ]
-
-  #   steps:
-  #   - uses: actions/checkout@v4
-
-  #   - name: Set up Go ${{ matrix.go-version }}
-  #     uses: actions/setup-go@v5
-  #     with:
-  #       go-version: ${{ matrix.go-version }}
-
-  #   - name: Test
-  #     run: go test ./... -count 100
-

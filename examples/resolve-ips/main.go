@@ -14,9 +14,9 @@ import (
  * This example demonstrates how resolve a set of IP addresses to hostnames
  */
 
-const prefix = "10.219.224.0/24"
-const timeout = 5
+const prefix = "10.0.0.0/24"
 
+//lint:ignore U1000 linter is wrong..
 var countTotal int
 
 // Generate a stream of IP addresses given a CIDR range
