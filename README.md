@@ -5,8 +5,8 @@ go-functional is a library that provides functional constructs for Go programs.
 
 
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/jake-scott/go-functional)
-[![Git Workflow](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml
-)](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml)
+[![Git Workflow](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml?branch=develop
+)](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml?branch=develop)
 [![Go Version](https://img.shields.io/badge/go%20version-%3E=1.21-61CFDD.svg?style=flat-square)](https://golang.org/)
 [![GO Reference](https://pkg.go.dev/badge/mod/github.com/jake-scott/go-functional)](https://pkg.go.dev/mod/github.com/jake-scott/go-functional)
 
