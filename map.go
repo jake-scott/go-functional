@@ -2,6 +2,7 @@ package functional
 
 import (
 	"cmp"
+	"context"
 	"slices"
 
 	"github.com/jake-scott/go-functional/iter/channel"
@@ -146,9 +147,12 @@ func mapBatchParallelProcessor[T, TW, M, MW any](s *Stage[T], t tracer, m MapFun
 
 	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write wrapped input values to the query channel
-		func(i uint, t T, ch chan TW) {
+		func(ctx context.Context, i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
-			ch <- item
+			select {
+			case ch <- item:
+			case <-ctx.Done():
+			}
 		},
 
 		// read wrapped input values, write mapped wrapped output values to
@@ -222,7 +226,6 @@ func mapStreaming[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] 
 				}
 			}
 		}
-		close(ch)
 
 		// if there is an iterator read error, report it even though we
 		// can't abort the next stage; at least we can stop sending items
@@ -231,6 +234,7 @@ func mapStreaming[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iterator[M] 
 			s.opts.onError(ErrorContextItertator, s.i.Error())
 		}
 
+		close(ch)
 	}()
 
 	i := channel.New(ch)
@@ -245,8 +249,11 @@ func mapStreamingParallel[T, M any](t tracer, s *Stage[T], m MapFunc[T, M]) Iter
 	defer t.end()
 
 	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
-		func(i uint, t T, ch chan T) {
-			ch <- t
+		func(ctx context.Context, i uint, t T, ch chan T) {
+			select {
+			case ch <- t:
+			case <-ctx.Done():
+			}
 		},
 
 		func(item T, ch chan M) error {

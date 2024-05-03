@@ -2,6 +2,7 @@ package functional
 
 import (
 	"cmp"
+	"context"
 	"slices"
 
 	"github.com/jake-scott/go-functional/iter/channel"
@@ -155,9 +156,13 @@ func parallelBatchFilterProcessor[T any, TW any](s *Stage[T], t tracer, f Filter
 	// MW is inferred to be the same as TW for a filter..
 	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write wrapped input values to the query channel
-		func(i uint, t T, ch chan TW) {
+		func(ctx context.Context, i uint, t T, ch chan TW) {
 			item := wrapper(i, t)
-			ch <- item
+
+			select {
+			case ch <- item:
+			case <-ctx.Done():
+			}
 		},
 
 		// read wrapped values, write to the output channel if f() == true
@@ -236,7 +241,6 @@ func (s *Stage[T]) filterStreaming(t tracer, f FilterFunc[T]) Iterator[T] {
 				}
 			}
 		}
-		close(ch)
 
 		// if there is an iterator read error, report it even though we
 		// can't abort the next stage; at least we can stop sending items
@@ -244,6 +248,8 @@ func (s *Stage[T]) filterStreaming(t tracer, f FilterFunc[T]) Iterator[T] {
 		if s.i.Error() != nil {
 			s.opts.onError(ErrorContextItertator, s.i.Error())
 		}
+
+		close(ch)
 	}()
 
 	i := channel.New(ch)
@@ -259,8 +265,11 @@ func (s *Stage[T]) parallelStreamingFilter(t tracer, f FilterFunc[T]) Iterator[T
 
 	chOut := parallelProcessor(s.opts, numParallel, s.i, t,
 		// write input values to the query channel
-		func(i uint, t T, ch chan T) {
-			ch <- t
+		func(ctx context.Context, i uint, t T, ch chan T) {
+			select {
+			case ch <- t:
+			case <-ctx.Done():
+			}
 		},
 
 		// read values from the query channel, write to the output channel if f() == true

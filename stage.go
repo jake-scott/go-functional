@@ -88,6 +88,7 @@ var stageCounter atomic.Uint32
 type Stage[T any] struct {
 	i    Iterator[T]
 	id   uint32
+	wg   *sync.WaitGroup
 	opts stageOptions
 }
 
@@ -213,6 +214,7 @@ func NewStage[T any](i Iterator[T], opts ...StageOption) *Stage[T] {
 			onError:  nullErrorHandler,
 		},
 		id: stageCounter.Add(1),
+		wg: &sync.WaitGroup{},
 	}
 	s.opts.processOptions(opts...)
 	return s
@@ -264,6 +266,7 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 	nextStage := &Stage[U]{
 		i:  i,
 		id: stageCounter.Add(1),
+		wg: s.wg,
 	}
 
 	// if this stage has inheritence enabled them copy its options to the
@@ -300,28 +303,41 @@ func nextStage[T, U any](s *Stage[T], i Iterator[U], opts ...StageOption) *Stage
 // TW: wrapped source item type
 // MW: wrapped result item type (same as TW for filters, possibly different than TW for maps)
 func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter Iterator[T], t tracer,
-	push func(uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
+	push func(context.Context, uint, T, chan TW), pull func(TW, chan MW) error) chan MW {
 
 	chWorker := make(chan TW) // channel towards to workers
 	chOut := make(chan MW)    // worker output channel
 
 	ctx, cancel := context.WithCancel(opts.ctx)
 
+	wgReader := sync.WaitGroup{}
+	wgReader.Add(1)
+
+	chStop := make(chan struct{})
+
 	// (1) Read items from the iterator in a separate goroutine, until done or
 	//     the context expires, then write the items to the worker channel
 	go func() {
 		t := t.subTracer("reader")
+		defer wgReader.Done()
+		defer t.end()
 
 		// close chWorker when done.. this will cause the workers to terminate
 		// when they have processed the items
 		defer func() {
-			closeChanIfOpen(chWorker)
+			close(chWorker)
 		}()
 
 		i := 0
+	iterLoop:
 		for iter.Next(ctx) {
 			// run the push function which should write all items to chWorker
-			push(uint(i), iter.Get(), chWorker)
+			select {
+			case <-chStop: // if the workers terminate first, this tells us to stop
+				break iterLoop
+			default:
+				push(ctx, uint(i), iter.Get(), chWorker)
+			}
 			i++
 		}
 
@@ -331,21 +347,19 @@ func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter 
 		if iter.Error() != nil {
 			opts.onError(ErrorContextItertator, iter.Error())
 		}
-
-		t.end()
 	}()
 
 	// (2) Start worker go-routines.  These read items from chWorker until that
 	// channel is closed by the producer go-routine (1) above.
-	wg := sync.WaitGroup{}
+	wgWorker := sync.WaitGroup{}
 	for i := uint(0); i < numParallel; i++ {
-		wg.Add(1)
+		wgWorker.Add(1)
 
 		i := i
 		go func() {
 			t := t.subTracer("processor %d", i)
 
-			defer wg.Done()
+			defer wgWorker.Done()
 			defer t.end()
 
 		readLoop:
@@ -381,8 +395,11 @@ func parallelProcessor[T, TW, MW any](opts stageOptions, numParallel uint, iter 
 	go func() {
 		t := t.subTracer("wait for processors")
 
-		wg.Wait()
+		wgWorker.Wait()
 		close(chOut)
+		close(chStop)
+
+		wgReader.Wait()
 
 		t.end()
 		cancel()

@@ -150,8 +150,11 @@ func TestParallelProcessor(t *testing.T) {
 	opts := stageOptions{ctx: ctx, onError: errHandler}
 
 	ch := parallelProcessor[int, int, int](opts, 5, &iterIn, tr,
-		func(idx uint, i int, ch chan int) {
-			ch <- i
+		func(ctx context.Context, idx uint, i int, ch chan int) {
+			select {
+			case ch <- i:
+			case <-ctx.Done():
+			}
 		},
 		func(i int, ch chan int) error {
 			ch <- i
@@ -167,8 +170,9 @@ func TestParallelProcessor(t *testing.T) {
 
 	// results will not be in order..
 	assert.ElementsMatch(hundredInts, results)
-	assert.NoError(goleak.Find())
+
 	assert.Nil(capturedError)
+	assert.NoError(goleak.Find())
 }
 
 func TestParallelProcessorCancelled(t *testing.T) {
@@ -194,7 +198,7 @@ func TestParallelProcessorCancelled(t *testing.T) {
 	}
 
 	ch := parallelProcessor(opts, 5, &iterIn, tr,
-		func(idx uint, i int, ch chan int) {
+		func(ctx context.Context, idx uint, i int, ch chan int) {
 			select {
 			case ch <- i:
 			case <-ctx.Done():
@@ -215,8 +219,11 @@ func TestParallelProcessorCancelled(t *testing.T) {
 	assert.IsType(make(chan int), ch)
 	cancel()
 
-	assert.NoError(goleak.Find())
+	// wait for the output channel to be closed
+	<-ch
+
 	assert.ErrorIs(capturedError, context.Canceled)
+	assert.NoError(goleak.Find())
 }
 
 func TestCloseChanIfOpen(t *testing.T) {

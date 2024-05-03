@@ -207,20 +207,25 @@ func TestStalledMapStreaming(t *testing.T) {
 		WithContext(ctx),
 	}
 
-	stage := NewSliceStage([]int{1, 3030, 55, 787, 97}, opts...)
+	stage := NewSliceStage(hundredInts, opts...)
 	result := Map(stage, stringify)
 
-	ctx = context.Background()
 	iter := result.Iterator()
 
 	count := 0
-	for iter.Next(ctx) {
+	ctxIter := context.Background()
+	for iter.Next(ctxIter) {
 		_ = iter.Get()
+		if count == 0 {
+			cancel()
+		}
+
 		count++
-		cancel()
 	}
 
-	assert.Equal(1, count)
+	<-ctx.Done()
+
+	assert.Less(count, 100)
 	assert.NoError(goleak.Find())
 }
 
@@ -305,6 +310,9 @@ func TestFailedMapFunc(t *testing.T) {
 			fe := firstError.Load().(myError)
 			assert.NotNil(fe.err)
 			assert.ErrorIs(fe.err, errIs66)
+
+			assert.NoError(goleak.Find())
+
 		})
 	}
 }
@@ -384,6 +392,7 @@ func TestFailedMapIterator(t *testing.T) {
 			assert.ErrorIs(fe.err, errIs66)
 
 			assert.Less(len(out), len(hundredInts))
+			assert.NoError(goleak.Find())
 
 		})
 	}
@@ -395,11 +404,11 @@ func TestMapCancelled(t *testing.T) {
 		parallelism int
 		ordered     bool
 	}{
-		// {BatchStage, 0, false},
-		// {BatchStage, 0, true},
-		// {BatchStage, 3, false},
-		// {BatchStage, 3, true},
-		//{StreamingStage, 0, false},
+		{BatchStage, 0, false},
+		{BatchStage, 0, true},
+		{BatchStage, 3, false},
+		{BatchStage, 3, true},
+		{StreamingStage, 0, false},
 		{StreamingStage, 3, false},
 	}
 	for _, tt := range testVarieties {
@@ -463,6 +472,8 @@ func TestMapCancelled(t *testing.T) {
 			fe := firstError.Load().(myError)
 			assert.NotNil(fe.err)
 			assert.ErrorIs(fe.err, context.Canceled)
+			assert.NoError(goleak.Find())
+
 		})
 	}
 }

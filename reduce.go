@@ -38,14 +38,28 @@ func Reduce[T, A any](s *Stage[T], initial A, r ReduceFunc[T, A], opts ...StageO
 	var err error
 
 reduceLoop:
-	for s.i.Next(s.opts.ctx) {
+	for s.i.Next(merged.opts.ctx) {
+		// select {
+		// case <-merged.opts.ctx.Done():
+		// 	break reduceLoop
+		// default:
+
 		accum, err = r(accum, s.i.Get())
 		if err != nil {
-			if !s.opts.onError(ErrorContextFilterFunction, err) {
+			if !merged.opts.onError(ErrorContextFilterFunction, err) {
 				t.msg("reduce done due to error: %s", err)
 				break reduceLoop
 			}
 		}
+		// }
+	}
+
+	if s.i.Error() != nil {
+		merged.opts.onError(ErrorContextItertator, s.i.Error())
+	}
+
+	if merged.opts.ctx.Err() != nil {
+		merged.opts.onError(ErrorContextOther, merged.opts.ctx.Err())
 	}
 
 	return accum

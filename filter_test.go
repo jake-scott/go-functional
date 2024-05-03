@@ -153,6 +153,8 @@ func TestFilterIntsBatch(t *testing.T) {
 			}
 		}
 	}
+
+	assert.NoError(t, goleak.Find())
 }
 
 func TestFilterIntsStreaming(t *testing.T) {
@@ -229,11 +231,10 @@ func TestFilterIntsStreaming(t *testing.T) {
 				} else {
 					assert.ElementsMatch(tt.want, out)
 				}
+				assert.NoError(goleak.Find())
 			})
 		}
 	}
-
-	assert.NoError(t, goleak.Find())
 }
 
 func TestStalledFilterStreaming(t *testing.T) {
@@ -359,6 +360,7 @@ func TestFailedFilterFunc(t *testing.T) {
 			fe := firstError.Load().(myError)
 			assert.NotNil(fe.err)
 			assert.ErrorIs(fe.err, errIs66)
+			assert.NoError(goleak.Find())
 		})
 	}
 }
@@ -457,9 +459,10 @@ func TestFailedFilterIterator(t *testing.T) {
 			assert.ErrorIs(fe.err, errIs66)
 
 			assert.Less(len(out), len(hundredInts))
-
+			assert.NoError(goleak.Find())
 		})
 	}
+
 }
 
 func TestFilterCancelled(t *testing.T) {
@@ -468,12 +471,12 @@ func TestFilterCancelled(t *testing.T) {
 		parallelism int
 		ordered     bool
 	}{
-		// {BatchStage, 0, false},
-		// {BatchStage, 0, true},
-		// {BatchStage, 3, false},
-		// {BatchStage, 3, true},
+		{BatchStage, 0, false},
+		{BatchStage, 0, true},
+		{BatchStage, 3, false},
+		{BatchStage, 3, true},
 		{StreamingStage, 0, false},
-		//{StreamingStage, 3, false},
+		{StreamingStage, 3, false},
 	}
 	for _, tt := range testVarieties {
 		name := fmt.Sprintf("type=%s parallel=%d ordered=%v", tt.stageType, tt.parallelism, tt.ordered)
@@ -538,6 +541,7 @@ func TestFilterCancelled(t *testing.T) {
 			fe := firstError.Load().(myError)
 			assert.NotNil(fe.err)
 			assert.ErrorIs(fe.err, context.Canceled)
+			assert.NoError(goleak.Find())
 		})
 	}
 }
