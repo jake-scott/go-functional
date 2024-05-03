@@ -56,7 +56,7 @@ func TestChannelIteratorTimeout(t *testing.T) {
 	}()
 
 	iter := New(ch)
-	ctx, cancel := context.WithTimeout(ctx, time.Second*2) // only read the iterator for 2 seconds total
+	ctx, cancel := context.WithTimeout(ctx, time.Millisecond*20) // only read the iterator for 20 ms total
 
 	gotLines := []string{}
 	defer cancel()
