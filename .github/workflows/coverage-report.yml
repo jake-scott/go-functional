@@ -37,16 +37,19 @@ jobs:
       - name: Generate test includes
         run: |
           echo pkgs=$(go list ./... | grep -v /examples/) >> "$GITHUB_ENV"
-      - name: Generate coverage
+      - name: Generate coverage profile
         run: |
-            go test $pkgs -count 100 -coverprofile=./cover.out -covermode=atomic;
-            go tool cover -html=cover.out -o coverage.html
+            go test $pkgs -count 100 -coverprofile=./cover.out -covermode=atomic
+      - name: Generate report
+        run: |
+            mkdir -p ./coverage
+            go tool cover -html=cover.out -o ./coverage/coverage.html
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'coverage.html'
+          path: ./coverage
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

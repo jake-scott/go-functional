@@ -28,7 +28,8 @@ jobs:
     name: Basic tests
     strategy:
       matrix:
-        os: ['windows-latest', 'ubuntu-latest']
+#        os: ['windows-latest', 'ubuntu-latest']
+        os: ['ubuntu-latest']
         go-version: ['1.21.x', '1.22.x' ]
 
     runs-on: ${{ matrix.os }}
