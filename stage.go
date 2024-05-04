@@ -1,3 +1,6 @@
+// Package functional provides highly performant functional primitives
+// for Go.  It supports streaming and parallel execution of stages
+// of a processing pipeline.
 package functional
 
 import (
