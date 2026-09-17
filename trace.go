@@ -89,13 +89,16 @@ func (t *realTracer) start() {
 func (t *realTracer) subTracer(description string, v ...any) tracer {
 	subId := t.subids.Add(1)
 
-	t2 := *t
-	t2.subids = atomic.Uint32{}
-	t2.ids = append(slices.Clone(t.ids), subId)
-	t2.description += fmt.Sprintf(" / "+description, v...)
+	// Build the child explicitly rather than copying *t: realTracer holds an
+	// atomic counter, which must not be copied.
+	t2 := &realTracer{
+		description: t.description + fmt.Sprintf(" / "+description, v...),
+		ids:         append(slices.Clone(t.ids), subId),
+		traceFunc:   t.traceFunc,
+	}
 
 	t2.start()
-	return &t2
+	return t2
 }
 
 // msg

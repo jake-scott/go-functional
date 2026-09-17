@@ -21,10 +21,9 @@ type MapFunc[T any, M any] func(T) (M, error)
 
 // Map processes the stage's input elements by calling m for each element,
 // returning a new stage containing the same number of elements, mapped to
-// new values of the same type.
-//
-// If the map function returns values of a different type to the input values,
-// the non-OO version of Map() must be used instead.
+// new values of type M.  M may differ from the input type T, so Map calls
+// can be chained even when each step changes the element type.  M is
+// normally inferred from the map function.
 //
 // If the stage is configured to process in batch, Map returns after all the
 // input elements have been processed;  those elements are passed to the next
@@ -34,13 +33,11 @@ type MapFunc[T any, M any] func(T) (M, error)
 // launching go-routines to process the elements in the background.  The
 // returned stage reads from a channel that the processing goroutine writes
 // its result to as they are processed.
-func (s *Stage[T]) Map(m MapFunc[T, T], opts ...StageOption) *Stage[T] {
+func (s *Stage[T]) Map[M any](m MapFunc[T, M], opts ...StageOption) *Stage[M] {
 	return Map(s, m, opts...)
 }
 
-// Map is the non-OO version of Stage.Map().  It must be used in the case
-// where the map function returns items of a different type than the input
-// elements, due to limitations of Golang's generic syntax.
+// Map is the procedural equivalent of Stage.Map().
 func Map[T, M any](s *Stage[T], m MapFunc[T, M], opts ...StageOption) *Stage[M] {
 	// opts for this Map are the stage options overridden by the Map
 	// specific options passed to this call

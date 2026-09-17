@@ -7,7 +7,7 @@ go-functional is a library that provides functional constructs for Go programs.
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/jake-scott/go-functional)
 [![Git Workflow](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml?branch=develop
 )](https://img.shields.io/github/actions/workflow/status/jake-scott/go-functional/checks.yml?branch=develop)
-[![Go Version](https://img.shields.io/badge/go%20version-%3E=1.21-61CFDD.svg?style=flat-square)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/go%20version-%3E=1.27-61CFDD.svg?style=flat-square)](https://golang.org/)
 [![GO Reference](https://pkg.go.dev/badge/mod/github.com/jake-scott/go-functional)](https://pkg.go.dev/mod/github.com/jake-scott/go-functional)
 
 # Overview
@@ -32,6 +32,9 @@ data transfer between stages.
 go get github.com/jake-scott/go-functional
 ```
 
+go-functional requires Go 1.27 or later, as the chainable `Map` and `Reduce`
+methods rely on generic methods introduced in that release.
+
 # Usage
 
 ## Basic Example
@@ -48,12 +51,10 @@ people := []Person{
     {"Charlie", 40},
 }
 
-// Filter adults
-adults := functional.NewSliceStage(people).
-    Filter(func(p Person) (bool, error) { return p.Age >= 30, nil })
-
-// Map names to uppercase
-names := functional.Map(adults, func(p Person) (string, error) { return strings.ToUpper(p.Name), nil })
+// Filter adults, then map to upper-case names
+names := functional.NewSliceStage(people).
+    Filter(func(p Person) (bool, error) { return p.Age >= 30, nil }).
+    Map(func(p Person) (string, error) { return strings.ToUpper(p.Name), nil })
 
 // Iterate over results
 ctx := context.Background()
@@ -170,21 +171,36 @@ results := functional.NewSliceStage(people).
     Map(personCapitalize)
 ```
 
-The object-oriented interface cannot be used when a map function returns elements
-of a new type. In that case, the procedural interface must be used at least for
-that stage:
+Map and Reduce may change the element type mid-chain.  The output type is
+inferred from the supplied function, so no explicit type arguments are needed:
 
 ```go
 getName := func(p person) (string, error) {
     return p.name, nil
 }
 
+nameLength := func(total int, name string) (int, error) {
+    return total + len(name), nil
+}
+
+total := functional.NewSliceStage(people).
+    Filter(over25).
+    Map(getName).
+    Reduce(0, nameLength)
+```
+
+The procedural interface remains available and is equivalent:
+
+```go
 results1 := functional.NewSliceStage(people).
     Filter(over25)
 
-results := functional.Map(results1, getName)
-
+names := functional.Map(results1, getName)
+total := functional.Reduce(names, 0, nameLength)
 ```
+
+Note that because these are generic methods, a method *value* (as opposed to a
+method call) must be explicitly instantiated, for example `stage.Map[string]`.
 
 ## Retrieving results
 
